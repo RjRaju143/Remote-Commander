@@ -1,0 +1,116 @@
+
+# 🏗️ Architecture – Linux Server Manager
+
+## 🧩 Stage-1
+
+> A secure web interface to execute and stream terminal commands to remote Linux servers — built with **Next.js**, **MongoDB**.
+
+---
+
+## 📦 Core Technologies
+
+| Layer         | Tech              | Purpose                                  |
+| ------------- | ----------------- | ---------------------------------------- |
+| Frontend      | **Next.js**       | Web UI + API routes                      |
+| Terminal UI   | **xterm.js**      | Browser-based terminal (real-time shell) |
+| SSH Client    | **ssh2**          | Connects to remote Linux servers         |
+| Database      | **MongoDB**       | Stores server login credentials          |
+| Auth          | Any JWT / Session | Ensures only logged-in users access SSH  |
+
+---
+
+## 🧠 App Behavior
+
+### ✅ User Flow:
+
+1. ✅ User logs into web app
+2. ✅ Selects a server from saved list
+3. ✅ Opens interactive terminal in browser
+4. ✅ Types commands → streamed via WebSocket
+5. ✅ SSH connection is **closed on logout or timeout**
+
+---
+
+## 🗂 MongoDB (Database) Design
+
+### `servers` collection:
+
+Stores Linux server credentials.
+
+```json
+{
+  _id: "ObjectId",
+  name: "App Server 1",
+  ip: "192.168.1.100",
+  port: 22,
+  username: "ubuntu",
+  privateKey: "<AES encrypted>",
+  ownerId: "User ID",
+  guestIds: ["Guest User ID"],
+  status: "inactive",
+}
+```
+
+> Optional: Add tags, region, or labels for grouping
+
+---
+
+## 🔌 Architecture Diagram
+
+```text
+  [User] ⇄ [Next.js App]
+
+     ⬇ Authenticated
+
+  /servers
+     ⇄ MongoDB ← stores login credentials (encrypted)
+  
+  /terminal (WebSocket)
+     ⇄ ssh2 stream
+     ⇄ Remote Linux server
+
+     ⇅ xterm.js UI (live terminal)
+```
+
+---
+
+## 🛡 Security Rules
+
+| Rule                                | Purpose                  |
+| ----------------------------------- | ------------------------ |
+| ✅ Auth required for SSH or terminal | Prevent anonymous access |
+| ✅ SSH credentials encrypted         | Secure key handling      |
+| ✅ Commands stored/logged        | history saved in log table         |
+| ✅ WebSocket bound to auth/session   | Session-based SSH        |
+| ✅ SSH session ends on logout        | Auto-cleanup             |
+
+---
+
+## ✅ Supported Features
+
+* [ Y ] SSH via private key (or password, optional)
+* [ X ] Interactive commands (`nano`, `htop`, etc.)
+* [ Y ] Streamed output with `xterm.js`
+* [ Y ] MongoDB-stored server credentials (one per user)
+
+---
+
+## ✅ Included (By Design)
+
+* [ X ] command logging in log table
+* [ X ] audit trails or history
+* [ Y ] user roles or teams (user management)
+* [ X ] (SFTP) file upload/download
+
+---
+
+## 🧩 Stage-2 Features & Enhancements
+
+| Feature               | Add Later? |
+| --------------------- | ---------- |
+| Servers health status | ✅          |
+| Command whitelist     | ✅          |
+| File browser (SFTP)   | ✅          |
+| Role-based access     | ✅  [Done]        |
+
+---
