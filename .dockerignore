@@ -1,0 +1,40 @@
+
+# Git files
+.git
+.gitignore
+
+# Docker files
+Dockerfile
+.dockerignore
+
+# Node modules
+node_modules
+
+# Next.js build output (will be handled by multi-stage build)
+.next
+
+# Local environment variables
+.env
+.env*.local
+
+# SQLite database file (should be managed with volumes in production)
+# *.sqlite - commented out to allow velocity.sqlite to be copied
+*.sqlite-journal
+# Allow specific SQLite files needed for the app
+!velocity.sqlite
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# IDE and editor specific files
+.vscode
+*.swp
+*~
