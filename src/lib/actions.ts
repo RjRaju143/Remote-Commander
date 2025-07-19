@@ -820,3 +820,41 @@ export async function handleChangePassword(
         return { error: 'An unexpected error occurred.' };
     }
 }
+
+const ProfileSchema = z.object({
+  firstName: z.string().min(1, { message: "First name is required." }),
+  lastName: z.string().min(1, { message: "Last name is required." }),
+});
+
+export async function handleUpdateProfile(
+  prevState: AuthState | undefined,
+  formData: FormData
+): Promise<AuthState> {
+    const user = await getCurrentUser();
+    if (!user) {
+        return { error: "You must be logged in." };
+    }
+
+    const validatedFields = ProfileSchema.safeParse(Object.fromEntries(formData.entries()));
+    if (!validatedFields.success) {
+        return { error: validatedFields.error.errors[0]?.message || 'Invalid data.' };
+    }
+
+    const { firstName, lastName } = validatedFields.data;
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+
+        await db.collection("users").updateOne(
+            { _id: new ObjectId(user._id) },
+            { $set: { firstName, lastName } }
+        );
+        
+        revalidatePath('/dashboard/settings');
+        return { success: true };
+    } catch (error) {
+        console.error('Failed to update profile:', error);
+        return { error: 'An unexpected error occurred.' };
+    }
+}
