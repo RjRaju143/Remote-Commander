@@ -16,6 +16,7 @@ import type { User } from "@/models/User";
 import { ObjectId } from "mongodb";
 import type { Server } from "./types";
 import { Client } from 'ssh2';
+import nodemailer from 'nodemailer';
 
 
 export interface GenerateCommandState {
@@ -1003,7 +1004,7 @@ export async function toggleFavoriteServer(serverId: string) {
 
         // We only revalidate the favorites page, so the main dashboard doesn't re-sort
         revalidatePath('/dashboard/favorites');
-        revalidatePath('/dashboard');
+        // revalidatePath('/dashboard');
         return { success: true };
     } catch (error) {
         console.error('Failed to toggle favorite:', error);
@@ -1026,10 +1027,45 @@ export async function handleSupportRequest(
     if (!validatedFields.success) {
         return { error: validatedFields.error.errors[0]?.message || 'Invalid data.' };
     }
-    
-    // In a real application, you would send an email or create a ticket here.
-    // For this demo, we'll just log it to the console and return success.
-    console.log("Support Request Received:", validatedFields.data);
 
-    return { success: true };
+    const { name, email, message } = validatedFields.data;
+    
+    const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
+
+    if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
+        console.error("SMTP environment variables are not set.");
+        return { error: "The application is not configured to send emails. Please contact support directly." };
+    }
+
+    const transporter = nodemailer.createTransport({
+        host: SMTP_HOST,
+        port: Number(SMTP_PORT),
+        secure: Number(SMTP_PORT) === 465, // true for 465, false for other ports
+        auth: {
+            user: SMTP_USER,
+            pass: SMTP_PASS,
+        },
+    });
+
+    try {
+        await transporter.verify();
+    } catch (error) {
+        console.error("SMTP connection error:", error);
+        return { error: "Could not connect to the email server. Please try again later." };
+    }
+
+    try {
+        await transporter.sendMail({
+            from: `"${name}" <${email}>`,
+            to: "bangarraju1152@gmail.com",
+            subject: "New Support Request from Remote Commander",
+            text: message,
+            html: `<b>New Support Request</b><br><p><b>From:</b> ${name} (${email})</p><p><b>Message:</b></p><p>${message}</p>`,
+        });
+
+        return { success: true };
+    } catch (error) {
+        console.error("Failed to send support email:", error);
+        return { error: "There was an issue sending your message. Please try again." };
+    }
 }
