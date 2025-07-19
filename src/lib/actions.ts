@@ -335,10 +335,10 @@ export async function getServers({ page = 1, limit = 6 }: { page?: number, limit
   }
 }
 
-export async function getAllFavoriteServers() {
+export async function getFavoriteServers({ page = 1, limit = 6 }: { page?: number, limit?: number } = {}) {
   const user = await getCurrentUser();
   if (!user || !user.favorites || user.favorites.length === 0) {
-    return [];
+    return { servers: [], total: 0 };
   }
 
   try {
@@ -347,16 +347,23 @@ export async function getAllFavoriteServers() {
     const userObjectId = new ObjectId(user._id);
     const favoriteIds = user.favorites.map(id => new ObjectId(id));
 
-    const servers = await db.collection("servers").aggregate([
-      { 
-        $match: { 
-          _id: { $in: favoriteIds },
-          $or: [
-            { ownerId: userObjectId }, 
-            { guestIds: userObjectId }
-          ] 
-        } 
-      },
+    const skip = (page - 1) * limit;
+
+    const matchStage = {
+      $match: {
+        _id: { $in: favoriteIds },
+        $or: [
+          { ownerId: userObjectId },
+          { guestIds: userObjectId }
+        ]
+      }
+    };
+    
+    const serversPipeline = [
+      matchStage,
+      { $sort: { name: 1 } },
+      { $skip: skip },
+      { $limit: limit },
       {
         $lookup: {
           from: 'users',
@@ -383,16 +390,28 @@ export async function getAllFavoriteServers() {
           }
         }
       }
+    ];
+
+    const servers = await db.collection("servers").aggregate(serversPipeline).toArray();
+    
+    const totalResult = await db.collection("servers").aggregate([
+      matchStage,
+      { $count: 'total' }
     ]).toArray();
+    const total = totalResult.length > 0 ? totalResult[0].total : 0;
     
     const plainServers = JSON.parse(JSON.stringify(servers));
-    return plainServers.map((s: any) => ({ ...s, id: s._id.toString() }));
+    return {
+      servers: plainServers.map((s: any) => ({ ...s, id: s._id.toString() })),
+      total
+    };
 
   } catch (error) {
     console.error("Failed to fetch favorite servers:", error);
-    return [];
+    return { servers: [], total: 0 };
   }
 }
+
 
 export async function getServerById(serverId: string): Promise<Server | null> {
   const user = await getCurrentUser();

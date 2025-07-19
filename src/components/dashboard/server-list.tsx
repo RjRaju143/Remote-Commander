@@ -8,7 +8,7 @@ import type { Server } from "@/lib/types";
 import { HardDrive, MoreVertical, PlusCircle, Wifi, WifiOff, Edit, Trash2, Terminal, Loader2, Users, User, Share2, Cpu, MemoryStick, Database, RefreshCcw, Star } from "lucide-react";
 import { AddServerDialog } from "./add-server-dialog";
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { getServers, deleteServer, getCurrentUser, toggleFavoriteServer, getAllFavoriteServers } from "@/lib/actions";
+import { getServers, deleteServer, getCurrentUser, toggleFavoriteServer, getFavoriteServers } from "@/lib/actions";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -113,16 +113,22 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
 
   const fetchServersAndUser = useCallback(async () => {
     if (showOnlyFavorites) {
-      const [favServers, user] = await Promise.all([getAllFavoriteServers(), getCurrentUser()]);
+      const [{ servers: favServers, total }, user] = await Promise.all([
+          getFavoriteServers({ page: currentPage, limit: SERVERS_PER_PAGE }), 
+          getCurrentUser()
+        ]);
       const formattedServers = favServers.map((s: any) => ({ ...s, id: s._id.toString(), status: s.status || 'inactive' }));
       setServers(formattedServers);
+      setTotalServers(total);
       setCurrentUser(user);
-      setTotalServers(formattedServers.length);
     } else {
-      const [data, user] = await Promise.all([getServers({ page: currentPage, limit: SERVERS_PER_PAGE }), getCurrentUser()]);
-      const formattedServers = data.servers.map((s: any) => ({ ...s, id: s._id.toString(), status: s.status || 'inactive' }));
+      const [{ servers, total }, user] = await Promise.all([
+        getServers({ page: currentPage, limit: SERVERS_PER_PAGE }),
+        getCurrentUser()
+      ]);
+      const formattedServers = servers.map((s: any) => ({ ...s, id: s._id.toString(), status: s.status || 'inactive' }));
       setServers(formattedServers);
-      setTotalServers(data.total);
+      setTotalServers(total);
       setCurrentUser(user);
     }
   }, [currentPage, showOnlyFavorites]);
@@ -130,6 +136,10 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
   useEffect(() => {
     fetchServersAndUser();
   }, [fetchServersAndUser]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [showOnlyFavorites]);
 
 
   const handleCheckHealth = async (serverId: string) => {
@@ -160,7 +170,12 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
 
     try {
         await toggleFavoriteServer(serverId);
-        fetchServersAndUser(); // Re-fetch to ensure sync with backend, especially for pagination
+        // Reset to page 1 and re-fetch, this handles removing last item on a page
+        if (currentPage > 1 && servers.length === 1) {
+            setCurrentPage(currentPage - 1);
+        } else {
+            fetchServersAndUser();
+        }
     } catch(e) {
         setCurrentUser(originalUser); // Revert on error
         toast({ variant: "destructive", title: "Error", description: "Could not update favorites." });
@@ -174,7 +189,12 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
       toast({ variant: "destructive", title: "Error", description: result.error });
     } else {
       toast({ title: "Success", description: "Server deleted successfully." });
-      fetchServersAndUser(); // Re-fetch servers
+      // Reset to page 1 and re-fetch, this handles removing last item on a page
+       if (currentPage > 1 && servers.length === 1) {
+            setCurrentPage(currentPage - 1);
+        } else {
+            fetchServersAndUser();
+        }
     }
     setDeletingServerId(null);
   };
@@ -299,7 +319,7 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
         )}
       </div>
 
-       {!showOnlyFavorites && totalPages > 1 && (
+       {totalPages > 1 && (
         <div className="mt-8">
             <Pagination>
                 <PaginationContent>
