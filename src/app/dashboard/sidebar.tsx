@@ -15,13 +15,14 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Terminal, Server, Settings, LogOut, Users } from "lucide-react";
+import { Terminal, Server, Settings, LogOut, Users, LifeBuoy } from "lucide-react";
 import { handleLogout } from "@/lib/actions";
 import type { User } from "@/models/User";
 
 const menuItems = [
   { href: "/dashboard", label: "Servers", icon: Server },
   { href: "/dashboard/guests", label: "Guests", icon: Users },
+  { href: "/dashboard/support", label: "Support", icon: LifeBuoy },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 

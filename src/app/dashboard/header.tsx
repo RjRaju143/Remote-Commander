@@ -36,7 +36,9 @@ export function DashboardHeader() {
             <DropdownMenuItem asChild>
               <Link href="/dashboard/settings">Settings</Link>
             </DropdownMenuItem>
-            <DropdownMenuItem>Support</DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link href="/dashboard/support">Support</Link>
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
