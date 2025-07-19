@@ -421,7 +421,6 @@ export async function getCurrentUser(): Promise<User | null> {
         const db = client.db();
         const user = await db.collection('users').findOne(
             { _id: new ObjectId(decoded.userId as string) },
-            { projection: { password: 0 } }
         );
         if (!user) {
             return null;
@@ -764,5 +763,60 @@ export async function revokeGuestAccess(serverId: string, guestId: string) {
     } catch (error) {
         console.error("Failed to revoke guest access:", error);
         return { error: "An unexpected error occurred." };
+    }
+}
+
+const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Current password is required.'),
+  newPassword: z.string().min(6, 'New password must be at least 6 characters.'),
+  confirmPassword: z.string()
+}).refine(data => data.newPassword === data.confirmPassword, {
+  message: "New passwords do not match.",
+  path: ["confirmPassword"],
+});
+
+export async function handleChangePassword(
+    prevState: AuthState | undefined,
+    formData: FormData
+): Promise<AuthState> {
+    const user = await getCurrentUser();
+    if (!user) {
+        return { error: 'You must be logged in.' };
+    }
+
+    const validatedFields = ChangePasswordSchema.safeParse(Object.fromEntries(formData.entries()));
+
+    if (!validatedFields.success) {
+        return { error: validatedFields.error.errors[0]?.message || 'Invalid data.' };
+    }
+
+    const { currentPassword, newPassword } = validatedFields.data;
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+
+        const fullUser = await db.collection('users').findOne({ _id: new ObjectId(user._id) });
+        if (!fullUser || !fullUser.password) {
+            return { error: 'Could not find user data.' };
+        }
+
+        const passwordsMatch = await bcrypt.compare(currentPassword, fullUser.password);
+        if (!passwordsMatch) {
+            return { error: 'The current password you entered is incorrect.' };
+        }
+
+        const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+
+        await db.collection('users').updateOne(
+            { _id: new ObjectId(user._id) },
+            { $set: { password: hashedNewPassword } }
+        );
+        
+        return { success: true };
+
+    } catch (error) {
+        console.error('Failed to change password:', error);
+        return { error: 'An unexpected error occurred.' };
     }
 }
