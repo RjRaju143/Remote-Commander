@@ -6,17 +6,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getCurrentUser, handleChangePassword, handleUpdateProfile } from "@/lib/actions";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useActionState } from "react";
 import type { User } from "@/models/User";
-import { useActionState } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2 } from "lucide-react";
+import { Loader2, Eye, EyeOff } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 
 function ChangePasswordForm() {
     const { toast } = useToast();
     const [state, formAction, pending] = useActionState(handleChangePassword, undefined);
+    const [showCurrent, setShowCurrent] = useState(false);
+    const [showNew, setShowNew] = useState(false);
+    const [showConfirm, setShowConfirm] = useState(false);
 
     useEffect(() => {
         if (state?.error) {
@@ -31,26 +33,43 @@ function ChangePasswordForm() {
                 title: "Success",
                 description: "Your password has been changed successfully.",
             });
-            // Ideally, you'd reset the form here, but it's tricky with server actions.
-            // A full re-render or component key change would do it.
+            // This is a simple way to reset form fields after successful submission with useActionState
+            // by targeting the form element and calling reset().
+            const form = document.getElementById('changePasswordForm') as HTMLFormElement;
+            form?.reset();
         }
     }, [state, toast]);
 
     return (
-        <form action={formAction}>
+        <form action={formAction} id="changePasswordForm">
             <CardContent className="space-y-4 pt-6">
                  <CardDescription>Update your password here. It's recommended to use a strong, unique password.</CardDescription>
                 <div className="space-y-2">
                     <Label htmlFor="currentPassword">Current Password</Label>
-                    <Input id="currentPassword" name="currentPassword" type="password" required />
+                    <div className="relative">
+                        <Input id="currentPassword" name="currentPassword" type={showCurrent ? "text" : "password"} required />
+                         <Button type="button" variant="ghost" size="icon" className="absolute inset-y-0 right-0 h-full px-3" onClick={() => setShowCurrent(p => !p)}>
+                            {showCurrent ? <EyeOff /> : <Eye />}
+                         </Button>
+                    </div>
                 </div>
                 <div className="space-y-2">
                     <Label htmlFor="newPassword">New Password</Label>
-                    <Input id="newPassword" name="newPassword" type="password" required />
+                    <div className="relative">
+                        <Input id="newPassword" name="newPassword" type={showNew ? "text" : "password"} required />
+                         <Button type="button" variant="ghost" size="icon" className="absolute inset-y-0 right-0 h-full px-3" onClick={() => setShowNew(p => !p)}>
+                            {showNew ? <EyeOff /> : <Eye />}
+                         </Button>
+                    </div>
                 </div>
                 <div className="space-y-2">
                     <Label htmlFor="confirmPassword">Confirm New Password</Label>
-                    <Input id="confirmPassword" name="confirmPassword" type="password" required />
+                    <div className="relative">
+                        <Input id="confirmPassword" name="confirmPassword" type={showConfirm ? "text" : "password"} required />
+                        <Button type="button" variant="ghost" size="icon" className="absolute inset-y-0 right-0 h-full px-3" onClick={() => setShowConfirm(p => !p)}>
+                            {showConfirm ? <EyeOff /> : <Eye />}
+                         </Button>
+                    </div>
                 </div>
                 {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
                 <Button type="submit" disabled={pending}>
