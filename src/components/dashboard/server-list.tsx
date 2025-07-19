@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { Server } from "@/lib/types";
-import { HardDrive, MoreVertical, PlusCircle, Wifi, WifiOff, Edit, Trash2, Terminal, Loader2, Users, User, Share2 } from "lucide-react";
+import { HardDrive, MoreVertical, PlusCircle, Wifi, WifiOff, Edit, Trash2, Terminal, Loader2, Users, User, Share2, Cpu, MemoryStick, Database, RefreshCcw } from "lucide-react";
 import { AddServerDialog } from "./add-server-dialog";
 import { useEffect, useState } from "react";
 import { getServers, deleteServer, getCurrentUser } from "@/lib/actions";
@@ -31,10 +31,70 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ShareDialog } from "./share-dialog";
 import type { User as CurrentUser } from "@/models/User";
+import { Progress } from "@/components/ui/progress";
+import { getServerHealth, type GetServerHealthOutput } from "@/ai/flows/get-server-health";
 
+
+type ServerWithHealth = Server & { 
+    health?: GetServerHealthOutput;
+    isCheckingHealth?: boolean;
+};
+
+function HealthStatus({ health, isChecking, onRefresh }: { health?: GetServerHealthOutput, isChecking?: boolean, onRefresh: () => void }) {
+    if (!health && !isChecking) {
+        return (
+            <Button variant="outline" size="sm" onClick={onRefresh}>
+                <RefreshCcw className="mr-2" /> Check Health
+            </Button>
+        );
+    }
+    
+    return (
+        <div className="space-y-3">
+             <div className="flex justify-between items-center mb-2">
+                 <h4 className="text-sm font-medium">Server Health</h4>
+                 <Button variant="ghost" size="icon" onClick={onRefresh} disabled={isChecking}>
+                    <RefreshCcw className={isChecking ? "animate-spin" : ""} />
+                 </Button>
+            </div>
+            {isChecking && !health ? (
+                <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                        <Loader2 className="animate-spin" />
+                        <span className="text-sm text-muted-foreground">Fetching metrics...</span>
+                    </div>
+                    <Progress value={0} className="h-2"/>
+                    <Progress value={0} className="h-2"/>
+                    <Progress value={0} className="h-2"/>
+                </div>
+            ) : health && (
+                 <div className="space-y-3 text-sm">
+                    <div className="flex items-center gap-2">
+                        <Cpu className="text-primary"/>
+                        <span className="w-16">CPU</span>
+                        <Progress value={health.cpuUsage} className="h-2"/>
+                        <span className="w-10 text-right font-mono">{health.cpuUsage.toFixed(0)}%</span>
+                    </div>
+                     <div className="flex items-center gap-2">
+                        <MemoryStick className="text-primary"/>
+                        <span className="w-16">Memory</span>
+                        <Progress value={health.memoryUsage} className="h-2"/>
+                        <span className="w-10 text-right font-mono">{health.memoryUsage.toFixed(0)}%</span>
+                    </div>
+                     <div className="flex items-center gap-2">
+                        <Database className="text-primary"/>
+                        <span className="w-16">Disk</span>
+                        <Progress value={health.diskUsage} className="h-2"/>
+                        <span className="w-10 text-right font-mono">{health.diskUsage.toFixed(0)}%</span>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
 
 export function ServerList() {
-  const [servers, setServers] = useState<Server[]>([]);
+  const [servers, setServers] = useState<ServerWithHealth[]>([]);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [isAddDialogOpen, setAddDialogOpen] = useState(false);
   const [editingServer, setEditingServer] = useState<Server | null>(null);
@@ -53,6 +113,21 @@ export function ServerList() {
   useEffect(() => {
     fetchServers();
   }, []); 
+
+  const handleCheckHealth = async (serverId: string) => {
+    setServers(prev => prev.map(s => s.id === serverId ? { ...s, isCheckingHealth: true } : s));
+    try {
+        const health = await getServerHealth({ serverId });
+        setServers(prev => prev.map(s => s.id === serverId ? { ...s, health, isCheckingHealth: false } : s));
+    } catch (error: any) {
+        toast({
+            variant: "destructive",
+            title: "Health Check Failed",
+            description: error.message || "Could not retrieve server health.",
+        });
+        setServers(prev => prev.map(s => s.id === serverId ? { ...s, isCheckingHealth: false } : s));
+    }
+  };
 
   const handleDelete = async () => {
     if (!deletingServerId) return;
@@ -73,31 +148,6 @@ export function ServerList() {
       )
     );
     router.push(`/dashboard/server/${serverId}`);
-  };
-
-  const getStatusContent = (server: Server) => {
-    switch(server.status) {
-      case 'connecting':
-        return { 
-          badgeVariant: 'secondary',
-          icon: <Loader2 className="mr-2 animate-spin" />, 
-          text: 'Connecting'
-        };
-      case 'active': // This status is not currently used, but here for future use
-         return { 
-          badgeVariant: 'default',
-          badgeClass: 'bg-accent text-accent-foreground',
-          icon: <Wifi className="mr-2" />, 
-          text: 'Active'
-        };
-      case 'inactive':
-      default:
-         return { 
-          badgeVariant: 'secondary',
-          icon: <WifiOff className="mr-2" />, 
-          text: 'Inactive'
-        };
-    }
   };
 
   return (
@@ -163,11 +213,16 @@ export function ServerList() {
             </CardHeader>
             <CardContent className="flex-grow space-y-4">
                {!isOwner && server.owner && (
-                <div className="flex items-center text-sm text-muted-foreground">
+                <div className="flex items-center text-sm text-muted-foreground mb-4">
                   <Share2 className="mr-2 h-4 w-4" />
                   <span>Shared by: {server.owner.email}</span>
                 </div>
               )}
+              <HealthStatus 
+                health={server.health}
+                isChecking={server.isCheckingHealth}
+                onRefresh={() => handleCheckHealth(server.id!)}
+              />
             </CardContent>
             <CardFooter>
                <Button className="w-full" onClick={() => handleConnect(server.id!)} disabled={server.status === 'connecting'}>
