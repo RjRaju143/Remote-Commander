@@ -1002,9 +1002,7 @@ export async function toggleFavoriteServer(serverId: string) {
 
         await db.collection('users').updateOne({ _id: userObjectId }, updateOperation);
 
-        // We only revalidate the favorites page, so the main dashboard doesn't re-sort
         revalidatePath('/dashboard/favorites');
-        // revalidatePath('/dashboard');
         return { success: true };
     } catch (error) {
         console.error('Failed to toggle favorite:', error);
@@ -1059,8 +1057,7 @@ export async function handleSupportRequest(
             from: `"${name}" <${email}>`,
             to: "bangarraju1152@gmail.com",
             subject: "New Support Request from Remote Commander",
-            text: message,
-            html: `<b>New Support Request</b><br><p><b>From:</b> ${name} (${email})</p><p><b>Message:</b></p><p>${message}</p>`,
+            text: `New Support Request\n\nFrom: ${name} (${email})\n\nMessage:\n${message}`,
         });
 
         return { success: true };
