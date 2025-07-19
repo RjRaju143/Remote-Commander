@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getCurrentUser, handleChangePassword, handleUpdateProfile } from "@/lib/actions";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import type { User } from "@/models/User";
 import { useActionState } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -31,6 +31,8 @@ function ChangePasswordForm() {
                 title: "Success",
                 description: "Your password has been changed successfully.",
             });
+            // Ideally, you'd reset the form here, but it's tricky with server actions.
+            // A full re-render or component key change would do it.
         }
     }, [state, toast]);
 
@@ -60,7 +62,7 @@ function ChangePasswordForm() {
     );
 }
 
-function ProfileForm({ user }: { user: User | null }) {
+function ProfileForm({ user, onProfileUpdate }: { user: User | null; onProfileUpdate: () => void; }) {
     const { toast } = useToast();
     const [state, formAction, pending] = useActionState(handleUpdateProfile, undefined);
 
@@ -77,8 +79,9 @@ function ProfileForm({ user }: { user: User | null }) {
                 title: "Success",
                 description: "Your profile has been updated.",
             });
+            onProfileUpdate();
         }
-    }, [state, toast]);
+    }, [state, toast, onProfileUpdate]);
     
     return (
          <form action={formAction}>
@@ -87,11 +90,11 @@ function ProfileForm({ user }: { user: User | null }) {
                 <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                         <Label htmlFor="firstName">First Name</Label>
-                        <Input id="firstName" name="firstName" defaultValue={user?.firstName || ''} required />
+                        <Input key={user?.firstName} id="firstName" name="firstName" defaultValue={user?.firstName || ''} required />
                     </div>
                     <div className="space-y-2">
                         <Label htmlFor="lastName">Last Name</Label>
-                        <Input id="lastName" name="lastName" defaultValue={user?.lastName || ''} required />
+                        <Input key={user?.lastName} id="lastName" name="lastName" defaultValue={user?.lastName || ''} required />
                     </div>
                 </div>
                 <div className="space-y-2">
@@ -112,9 +115,14 @@ function ProfileForm({ user }: { user: User | null }) {
 export default function SettingsPage() {
   const [user, setUser] = useState<User | null>(null);
 
-  useEffect(() => {
-    getCurrentUser().then(setUser);
+  const fetchUser = useCallback(async () => {
+    const userData = await getCurrentUser();
+    setUser(userData);
   }, []);
+
+  useEffect(() => {
+    fetchUser();
+  }, [fetchUser]);
 
   return (
     <div className="space-y-8">
@@ -135,7 +143,7 @@ export default function SettingsPage() {
                 <CardHeader>
                     <CardTitle>Account Profile</CardTitle>
                 </CardHeader>
-                <ProfileForm user={user} />
+                <ProfileForm user={user} onProfileUpdate={fetchUser} />
             </Card>
         </TabsContent>
         <TabsContent value="password">
