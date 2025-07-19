@@ -965,6 +965,7 @@ export async function handleUpdateProfile(
         );
         
         revalidatePath('/dashboard/settings');
+        revalidatePath('/dashboard'); // To update sidebar
         return { success: true };
     } catch (error) {
         console.error('Failed to update profile:', error);
@@ -1002,9 +1003,33 @@ export async function toggleFavoriteServer(serverId: string) {
 
         // We only revalidate the favorites page, so the main dashboard doesn't re-sort
         revalidatePath('/dashboard/favorites');
+        revalidatePath('/dashboard');
         return { success: true };
     } catch (error) {
         console.error('Failed to toggle favorite:', error);
         return { error: 'An unexpected error occurred.' };
     }
+}
+
+const SupportRequestSchema = z.object({
+  name: z.string().min(1, 'Name is required.'),
+  email: z.string().email('Invalid email address.'),
+  message: z.string().min(10, 'Message must be at least 10 characters.'),
+});
+
+export async function handleSupportRequest(
+    prevState: AuthState | undefined,
+    formData: FormData
+): Promise<AuthState> {
+    const validatedFields = SupportRequestSchema.safeParse(Object.fromEntries(formData.entries()));
+
+    if (!validatedFields.success) {
+        return { error: validatedFields.error.errors[0]?.message || 'Invalid data.' };
+    }
+    
+    // In a real application, you would send an email or create a ticket here.
+    // For this demo, we'll just log it to the console and return success.
+    console.log("Support Request Received:", validatedFields.data);
+
+    return { success: true };
 }

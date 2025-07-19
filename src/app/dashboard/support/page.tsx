@@ -1,4 +1,6 @@
 
+'use client';
+
 import {
   Card,
   CardContent,
@@ -12,8 +14,14 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { Mail, Phone } from "lucide-react";
-import Link from "next/link";
+import { Mail, Phone, Loader2, Send } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { useActionState, useEffect } from "react";
+import { handleSupportRequest } from "@/lib/actions";
+import { useToast } from "@/hooks/use-toast";
 
 const faqs = [
   {
@@ -38,6 +46,64 @@ const faqs = [
   },
 ];
 
+
+function SupportForm() {
+  const { toast } = useToast();
+  const [state, formAction, pending] = useActionState(handleSupportRequest, undefined);
+
+  useEffect(() => {
+    if (state?.error) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: state.error,
+      });
+    }
+    if (state?.success) {
+      toast({
+        title: "Message Sent!",
+        description: "Thank you for contacting us. We'll get back to you shortly.",
+      });
+      const form = document.getElementById('supportForm') as HTMLFormElement;
+      form?.reset();
+    }
+  }, [state, toast]);
+
+  return (
+    <Card>
+        <CardHeader>
+        <CardTitle>Send us a Message</CardTitle>
+        <CardDescription>
+            Have a question or issue? Fill out the form below.
+        </CardDescription>
+        </CardHeader>
+        <form action={formAction} id="supportForm">
+            <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                        <Label htmlFor="name">Name</Label>
+                        <Input id="name" name="name" required placeholder="Your Name" />
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="email">Email</Label>
+                        <Input id="email" name="email" type="email" required placeholder="your.email@example.com" />
+                    </div>
+                </div>
+                <div className="space-y-2">
+                    <Label htmlFor="message">Message</Label>
+                    <Textarea id="message" name="message" required placeholder="Describe your issue or question..." />
+                </div>
+                 {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
+                <Button type="submit" disabled={pending}>
+                    {pending ? <Loader2 className="animate-spin" /> : <Send />}
+                    Send Message
+                </Button>
+            </CardContent>
+        </form>
+    </Card>
+  )
+}
+
 export default function SupportPage() {
   return (
     <div className="space-y-8">
@@ -49,6 +115,7 @@ export default function SupportPage() {
       </div>
 
       <div className="grid gap-8 md:grid-cols-2">
+        <SupportForm />
         <Card>
           <CardHeader>
             <CardTitle>Frequently Asked Questions</CardTitle>
@@ -67,15 +134,16 @@ export default function SupportPage() {
             </Accordion>
           </CardContent>
         </Card>
+      </div>
 
-        <Card>
+       <Card>
           <CardHeader>
-            <CardTitle>Contact Us</CardTitle>
+            <CardTitle>Contact Information</CardTitle>
             <CardDescription>
-              Can't find an answer? Reach out to us directly.
+              You can also reach out to us directly through these channels.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="grid md:grid-cols-2 gap-4">
              <div className="flex items-center gap-4 p-4 rounded-lg bg-muted">
                 <Mail className="size-6 text-primary" />
                 <div>
@@ -96,12 +164,11 @@ export default function SupportPage() {
                     </p>
                 </div>
              </div>
-             <div className="text-sm text-muted-foreground pt-4">
+             <div className="text-sm text-muted-foreground pt-4 col-span-full">
                 Our support team is available Monday to Friday, 9 AM to 5 PM IST. We typically respond to emails within 24 hours.
              </div>
           </CardContent>
         </Card>
-      </div>
     </div>
   );
 }
