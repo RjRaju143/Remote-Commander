@@ -7,8 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import type { Server } from "@/lib/types";
 import { HardDrive, MoreVertical, PlusCircle, Wifi, WifiOff, Edit, Trash2, Terminal, Loader2, Users, User, Share2, Cpu, MemoryStick, Database, RefreshCcw, Star } from "lucide-react";
 import { AddServerDialog } from "./add-server-dialog";
-import { useEffect, useState, useMemo } from "react";
-import { getServers, deleteServer, getCurrentUser, toggleFavoriteServer } from "@/lib/actions";
+import { useEffect, useState, useMemo, useCallback } from "react";
+import { getServers, deleteServer, getCurrentUser, toggleFavoriteServer, getAllFavoriteServers } from "@/lib/actions";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,12 +34,15 @@ import type { User as CurrentUser } from "@/models/User";
 import { Progress } from "@/components/ui/progress";
 import { getServerHealth, type GetServerHealthOutput } from "@/ai/flows/get-server-health";
 import { cn } from "@/lib/utils";
+import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 
 
 type ServerWithHealth = Server & { 
     health?: GetServerHealthOutput;
     isCheckingHealth?: boolean;
 };
+
+const SERVERS_PER_PAGE = 6;
 
 function HealthStatus({ health, isChecking, onRefresh }: { health?: GetServerHealthOutput, isChecking?: boolean, onRefresh: () => void }) {
     if (!health && !isChecking) {
@@ -96,6 +99,8 @@ function HealthStatus({ health, isChecking, onRefresh }: { health?: GetServerHea
 
 export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: boolean }) {
   const [servers, setServers] = useState<ServerWithHealth[]>([]);
+  const [totalServers, setTotalServers] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [isAddDialogOpen, setAddDialogOpen] = useState(false);
   const [editingServer, setEditingServer] = useState<Server | null>(null);
@@ -104,32 +109,27 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
   const { toast } = useToast();
   const router = useRouter();
 
-  const fetchServersAndUser = async () => {
-    const [dbServers, user] = await Promise.all([getServers(), getCurrentUser()]);
-    const formattedServers = dbServers.map((s: any) => ({ ...s, id: s._id.toString(), status: s.status || 'inactive' }));
-    setServers(formattedServers);
-    setCurrentUser(user);
-  };
+  const totalPages = Math.ceil(totalServers / SERVERS_PER_PAGE);
+
+  const fetchServersAndUser = useCallback(async () => {
+    if (showOnlyFavorites) {
+      const [favServers, user] = await Promise.all([getAllFavoriteServers(), getCurrentUser()]);
+      const formattedServers = favServers.map((s: any) => ({ ...s, id: s._id.toString(), status: s.status || 'inactive' }));
+      setServers(formattedServers);
+      setCurrentUser(user);
+      setTotalServers(formattedServers.length);
+    } else {
+      const [data, user] = await Promise.all([getServers({ page: currentPage, limit: SERVERS_PER_PAGE }), getCurrentUser()]);
+      const formattedServers = data.servers.map((s: any) => ({ ...s, id: s._id.toString(), status: s.status || 'inactive' }));
+      setServers(formattedServers);
+      setTotalServers(data.total);
+      setCurrentUser(user);
+    }
+  }, [currentPage, showOnlyFavorites]);
 
   useEffect(() => {
     fetchServersAndUser();
-  }, []); 
-
-  const displayedServers = useMemo(() => {
-    if (!servers || !currentUser) return [];
-    
-    const sorted = [...servers].sort((a, b) => {
-        const aIsFavorite = currentUser.favorites!.includes(a.id!);
-        const bIsFavorite = currentUser.favorites!.includes(b.id!);
-        return (bIsFavorite ? 1 : 0) - (aIsFavorite ? 1 : 0);
-    });
-
-    if (showOnlyFavorites) {
-        return sorted.filter(s => currentUser.favorites!.includes(s.id!));
-    }
-    
-    return sorted;
-  }, [servers, currentUser, showOnlyFavorites]);
+  }, [fetchServersAndUser]);
 
 
   const handleCheckHealth = async (serverId: string) => {
@@ -148,16 +148,23 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
   };
 
   const handleToggleFavorite = async (serverId: string) => {
-    await toggleFavoriteServer(serverId);
-    // Optimistically update UI, then refetch
-    const userFavorites = currentUser?.favorites || [];
-    const isFavorite = userFavorites.includes(serverId);
-    const newFavorites = isFavorite 
-        ? userFavorites.filter(id => id !== serverId)
-        : [...userFavorites, serverId];
+    const originalUser = currentUser;
+    // Optimistic UI update
+    setCurrentUser(prevUser => {
+        if (!prevUser) return null;
+        const newFavorites = prevUser.favorites?.includes(serverId)
+            ? prevUser.favorites.filter(id => id !== serverId)
+            : [...(prevUser.favorites || []), serverId];
+        return { ...prevUser, favorites: newFavorites };
+    });
 
-    setCurrentUser(prevUser => prevUser ? { ...prevUser, favorites: newFavorites } : null);
-    fetchServersAndUser(); // Re-fetch to ensure sync with backend
+    try {
+        await toggleFavoriteServer(serverId);
+        fetchServersAndUser(); // Re-fetch to ensure sync with backend, especially for pagination
+    } catch(e) {
+        setCurrentUser(originalUser); // Revert on error
+        toast({ variant: "destructive", title: "Error", description: "Could not update favorites." });
+    }
   };
 
   const handleDelete = async () => {
@@ -202,7 +209,7 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
       )}
      
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {displayedServers.map((server) => {
+        {servers.map((server) => {
           const isOwner = server.ownerId === currentUser?._id;
           const isFavorite = currentUser?.favorites?.includes(server.id!);
 
@@ -277,7 +284,7 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
             </CardFooter>
           </Card>
         )})}
-         {displayedServers.length === 0 && (
+         {servers.length === 0 && (
           <Card className="md:col-span-3 flex flex-col items-center justify-center p-8 text-center">
             <CardHeader>
               <CardTitle>{showOnlyFavorites ? "No Favorite Servers" : "No Servers Found"}</CardTitle>
@@ -291,6 +298,43 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
           </Card>
         )}
       </div>
+
+       {!showOnlyFavorites && totalPages > 1 && (
+        <div className="mt-8">
+            <Pagination>
+                <PaginationContent>
+                    <PaginationItem>
+                        <PaginationPrevious 
+                            href="#" 
+                            onClick={(e) => { e.preventDefault(); setCurrentPage(p => Math.max(1, p - 1)); }}
+                            className={currentPage === 1 ? 'pointer-events-none opacity-50' : ''}
+                        />
+                    </PaginationItem>
+                    
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                        <PaginationItem key={page}>
+                            <PaginationLink 
+                                href="#"
+                                onClick={(e) => { e.preventDefault(); setCurrentPage(page); }}
+                                isActive={currentPage === page}
+                            >
+                                {page}
+                            </PaginationLink>
+                        </PaginationItem>
+                    ))}
+                    
+                    <PaginationItem>
+                        <PaginationNext 
+                            href="#" 
+                            onClick={(e) => { e.preventDefault(); setCurrentPage(p => Math.min(totalPages, p + 1)); }}
+                            className={currentPage === totalPages ? 'pointer-events-none opacity-50' : ''}
+                        />
+                    </PaginationItem>
+                </PaginationContent>
+            </Pagination>
+        </div>
+      )}
+
 
        {editingServer && (
         <EditServerDialog

@@ -248,10 +248,10 @@ export async function handleLogout() {
   redirect('/');
 }
 
-export async function getServers() {
+export async function getServers({ page = 1, limit = 6 }: { page?: number, limit?: number } = {}) {
   const user = await getCurrentUser();
   if (!user) {
-    return [];
+    return { servers: [], total: 0 };
   }
 
   try {
@@ -259,9 +259,98 @@ export async function getServers() {
     const db = client.db();
     const userObjectId = new ObjectId(user._id);
 
+    const skip = (page - 1) * limit;
+
+    const matchStage = { 
+        $match: { 
+          $or: [
+            { ownerId: userObjectId }, 
+            { guestIds: userObjectId }
+          ] 
+        } 
+      };
+
+    const serversPipeline = [
+      matchStage,
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'ownerId',
+          foreignField: '_id',
+          as: 'ownerInfo',
+        },
+      },
+      {
+        $unwind: { path: "$ownerInfo", preserveNullAndEmptyArrays: true }
+      },
+      {
+        $addFields: {
+          isFavorite: { $in: ["$_id", user.favorites?.map(fav => new ObjectId(fav)) || []] }
+        }
+      },
+      {
+        $sort: { isFavorite: -1, name: 1 }
+      },
+      {
+        $skip: skip
+      },
+      {
+        $limit: limit
+      },
+      {
+        $project: {
+          name: 1,
+          ip: 1,
+          port: 1,
+          username: 1,
+          status: 1,
+          ownerId: 1,
+          guestIds: 1,
+          owner: {
+            _id: '$ownerInfo._id',
+            email: '$ownerInfo.email'
+          }
+        }
+      }
+    ];
+
+    const servers = await db.collection("servers").aggregate(serversPipeline).toArray();
+    
+    const totalServersResult = await db.collection("servers").aggregate([
+        matchStage,
+        { $count: "total" }
+    ]).toArray();
+    const total = totalServersResult.length > 0 ? totalServersResult[0].total : 0;
+
+    const plainServers = JSON.parse(JSON.stringify(servers));
+    
+    return {
+      servers: plainServers.map((s: any) => ({ ...s, id: s._id.toString() })),
+      total
+    };
+
+  } catch (error) {
+    console.error("Failed to fetch servers:", error);
+    return { servers: [], total: 0 };
+  }
+}
+
+export async function getAllFavoriteServers() {
+  const user = await getCurrentUser();
+  if (!user || !user.favorites || user.favorites.length === 0) {
+    return [];
+  }
+
+  try {
+    const client = await clientPromise;
+    const db = client.db();
+    const userObjectId = new ObjectId(user._id);
+    const favoriteIds = user.favorites.map(id => new ObjectId(id));
+
     const servers = await db.collection("servers").aggregate([
       { 
         $match: { 
+          _id: { $in: favoriteIds },
           $or: [
             { ownerId: userObjectId }, 
             { guestIds: userObjectId }
@@ -300,7 +389,7 @@ export async function getServers() {
     return plainServers.map((s: any) => ({ ...s, id: s._id.toString() }));
 
   } catch (error) {
-    console.error("Failed to fetch servers:", error);
+    console.error("Failed to fetch favorite servers:", error);
     return [];
   }
 }
@@ -430,7 +519,7 @@ export async function getCurrentUser(): Promise<User | null> {
         const plainUser = JSON.parse(JSON.stringify(user));
         plainUser._id = plainUser._id.toString();
         // Ensure favorites is an array even if it's missing
-        plainUser.favorites = plainUser.favorites || [];
+        plainUser.favorites = plainUser.favorites?.map((id: ObjectId | string) => id.toString()) || [];
 
         return plainUser;
     } catch (error) {
@@ -891,6 +980,7 @@ export async function toggleFavoriteServer(serverId: string) {
         await db.collection('users').updateOne({ _id: userObjectId }, updateOperation);
 
         revalidatePath('/dashboard');
+        revalidatePath('/dashboard/favorites');
         return { success: true };
     } catch (error) {
         console.error('Failed to toggle favorite:', error);
