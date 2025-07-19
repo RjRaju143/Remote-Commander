@@ -217,6 +217,7 @@ export async function handleRegister(
       password: hashedPassword,
       firstName,
       lastName,
+      favorites: [],
     });
 
     const token = jwt.sign(
@@ -428,6 +429,8 @@ export async function getCurrentUser(): Promise<User | null> {
         
         const plainUser = JSON.parse(JSON.stringify(user));
         plainUser._id = plainUser._id.toString();
+        // Ensure favorites is an array even if it's missing
+        plainUser.favorites = plainUser.favorites || [];
 
         return plainUser;
     } catch (error) {
@@ -855,6 +858,42 @@ export async function handleUpdateProfile(
         return { success: true };
     } catch (error) {
         console.error('Failed to update profile:', error);
+        return { error: 'An unexpected error occurred.' };
+    }
+}
+
+export async function toggleFavoriteServer(serverId: string) {
+    const user = await getCurrentUser();
+    if (!user) {
+        return { error: 'You must be logged in.' };
+    }
+    if (!ObjectId.isValid(serverId)) {
+        return { error: 'Invalid server ID.' };
+    }
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        const userObjectId = new ObjectId(user._id);
+        const serverObjectId = new ObjectId(serverId);
+
+        const isFavorite = user.favorites?.some(id => new ObjectId(id).equals(serverObjectId));
+        
+        let updateOperation;
+        if (isFavorite) {
+            // Remove from favorites
+            updateOperation = { $pull: { favorites: serverObjectId } };
+        } else {
+            // Add to favorites
+            updateOperation = { $addToSet: { favorites: serverObjectId } };
+        }
+
+        await db.collection('users').updateOne({ _id: userObjectId }, updateOperation);
+
+        revalidatePath('/dashboard');
+        return { success: true };
+    } catch (error) {
+        console.error('Failed to toggle favorite:', error);
         return { error: 'An unexpected error occurred.' };
     }
 }

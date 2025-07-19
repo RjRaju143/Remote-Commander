@@ -5,10 +5,10 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { Server } from "@/lib/types";
-import { HardDrive, MoreVertical, PlusCircle, Wifi, WifiOff, Edit, Trash2, Terminal, Loader2, Users, User, Share2, Cpu, MemoryStick, Database, RefreshCcw } from "lucide-react";
+import { HardDrive, MoreVertical, PlusCircle, Wifi, WifiOff, Edit, Trash2, Terminal, Loader2, Users, User, Share2, Cpu, MemoryStick, Database, RefreshCcw, Star } from "lucide-react";
 import { AddServerDialog } from "./add-server-dialog";
-import { useEffect, useState } from "react";
-import { getServers, deleteServer, getCurrentUser } from "@/lib/actions";
+import { useEffect, useState, useMemo } from "react";
+import { getServers, deleteServer, getCurrentUser, toggleFavoriteServer } from "@/lib/actions";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,6 +33,7 @@ import { ShareDialog } from "./share-dialog";
 import type { User as CurrentUser } from "@/models/User";
 import { Progress } from "@/components/ui/progress";
 import { getServerHealth, type GetServerHealthOutput } from "@/ai/flows/get-server-health";
+import { cn } from "@/lib/utils";
 
 
 type ServerWithHealth = Server & { 
@@ -103,7 +104,7 @@ export function ServerList() {
   const { toast } = useToast();
   const router = useRouter();
 
-  const fetchServers = async () => {
+  const fetchServersAndUser = async () => {
     const [dbServers, user] = await Promise.all([getServers(), getCurrentUser()]);
     const formattedServers = dbServers.map((s: any) => ({ ...s, id: s._id.toString(), status: s.status || 'inactive' }));
     setServers(formattedServers);
@@ -111,8 +112,18 @@ export function ServerList() {
   };
 
   useEffect(() => {
-    fetchServers();
+    fetchServersAndUser();
   }, []); 
+
+  const sortedServers = useMemo(() => {
+    if (!currentUser?.favorites) return servers;
+    return [...servers].sort((a, b) => {
+        const aIsFavorite = currentUser.favorites!.includes(a.id!);
+        const bIsFavorite = currentUser.favorites!.includes(b.id!);
+        return (bIsFavorite ? 1 : 0) - (aIsFavorite ? 1 : 0);
+    });
+  }, [servers, currentUser]);
+
 
   const handleCheckHealth = async (serverId: string) => {
     setServers(prev => prev.map(s => s.id === serverId ? { ...s, isCheckingHealth: true } : s));
@@ -129,6 +140,19 @@ export function ServerList() {
     }
   };
 
+  const handleToggleFavorite = async (serverId: string) => {
+    await toggleFavoriteServer(serverId);
+    // Optimistically update UI, then refetch
+    const userFavorites = currentUser?.favorites || [];
+    const isFavorite = userFavorites.includes(serverId);
+    const newFavorites = isFavorite 
+        ? userFavorites.filter(id => id !== serverId)
+        : [...userFavorites, serverId];
+
+    setCurrentUser(prevUser => prevUser ? { ...prevUser, favorites: newFavorites } : null);
+    fetchServersAndUser(); // Re-fetch to ensure sync with backend
+  };
+
   const handleDelete = async () => {
     if (!deletingServerId) return;
     const result = await deleteServer(deletingServerId);
@@ -136,7 +160,7 @@ export function ServerList() {
       toast({ variant: "destructive", title: "Error", description: result.error });
     } else {
       toast({ title: "Success", description: "Server deleted successfully." });
-      fetchServers(); // Re-fetch servers
+      fetchServersAndUser(); // Re-fetch servers
     }
     setDeletingServerId(null);
   };
@@ -158,7 +182,7 @@ export function ServerList() {
           open={isAddDialogOpen} 
           onOpenChange={(isOpen) => {
             setAddDialogOpen(isOpen);
-            if (!isOpen) fetchServers();
+            if (!isOpen) fetchServersAndUser();
           }}
         >
           <Button>
@@ -168,16 +192,27 @@ export function ServerList() {
         </AddServerDialog>
       </div>
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {servers.map((server) => {
+        {sortedServers.map((server) => {
           const isOwner = server.ownerId === currentUser?._id;
+          const isFavorite = currentUser?.favorites?.includes(server.id!);
 
           return (
           <Card key={server.id} className="flex flex-col">
             <CardHeader>
               <div className="flex items-start justify-between">
-                <div>
-                  <CardTitle className="font-headline">{server.name}</CardTitle>
-                  <CardDescription>{server.ip}:{server.port}</CardDescription>
+                <div className="flex items-center gap-2">
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-muted-foreground hover:text-yellow-400 -ml-2"
+                        onClick={() => handleToggleFavorite(server.id!)}
+                    >
+                       <Star className={cn("size-5", isFavorite && "fill-yellow-400 text-yellow-400")} />
+                    </Button>
+                    <div>
+                        <CardTitle className="font-headline">{server.name}</CardTitle>
+                        <CardDescription>{server.ip}:{server.port}</CardDescription>
+                    </div>
                 </div>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -255,7 +290,7 @@ export function ServerList() {
           onOpenChange={(isOpen) => {
             if (!isOpen) {
               setEditingServer(null);
-              fetchServers();
+              fetchServersAndUser();
             }
           }}
         />
