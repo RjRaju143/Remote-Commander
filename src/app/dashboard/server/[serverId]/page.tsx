@@ -11,6 +11,8 @@ import { Badge } from '@/components/ui/badge';
 import { useEffect, useState } from 'react';
 import type { Server } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { CommandClassifier } from '@/components/dashboard/command-classifier';
+import { Separator } from '@/components/ui/separator';
 
 type ConnectionStatus = 'connecting' | 'connected' | 'error';
 
@@ -74,8 +76,12 @@ export default function ServerShellPage({ params }: { params: { serverId: string
             case 'connected':
                  if (!server) return null;
                  return (
-                    <div className="flex-1 min-h-0">
-                        <ShellClientWrapper serverId={params.serverId} username={server.username} />
+                    <div className="flex-1 min-h-0 flex flex-col gap-4">
+                        <div className="flex-grow min-h-[400px]">
+                           <ShellClientWrapper serverId={params.serverId} username={server.username} />
+                        </div>
+                        <Separator />
+                        <CommandClassifier />
                     </div>
                  );
         }
@@ -112,4 +118,3 @@ export default function ServerShellPage({ params }: { params: { serverId: string
         </div>
     );
 }
-
