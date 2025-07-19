@@ -94,7 +94,7 @@ function HealthStatus({ health, isChecking, onRefresh }: { health?: GetServerHea
     );
 }
 
-export function ServerList() {
+export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: boolean }) {
   const [servers, setServers] = useState<ServerWithHealth[]>([]);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [isAddDialogOpen, setAddDialogOpen] = useState(false);
@@ -115,14 +115,21 @@ export function ServerList() {
     fetchServersAndUser();
   }, []); 
 
-  const sortedServers = useMemo(() => {
-    if (!currentUser?.favorites) return servers;
-    return [...servers].sort((a, b) => {
+  const displayedServers = useMemo(() => {
+    if (!servers || !currentUser) return [];
+    
+    const sorted = [...servers].sort((a, b) => {
         const aIsFavorite = currentUser.favorites!.includes(a.id!);
         const bIsFavorite = currentUser.favorites!.includes(b.id!);
         return (bIsFavorite ? 1 : 0) - (aIsFavorite ? 1 : 0);
     });
-  }, [servers, currentUser]);
+
+    if (showOnlyFavorites) {
+        return sorted.filter(s => currentUser.favorites!.includes(s.id!));
+    }
+    
+    return sorted;
+  }, [servers, currentUser, showOnlyFavorites]);
 
 
   const handleCheckHealth = async (serverId: string) => {
@@ -176,23 +183,26 @@ export function ServerList() {
 
   return (
     <section>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-2xl font-semibold font-headline">Your Servers</h2>
-        <AddServerDialog 
-          open={isAddDialogOpen} 
-          onOpenChange={(isOpen) => {
-            setAddDialogOpen(isOpen);
-            if (!isOpen) fetchServersAndUser();
-          }}
-        >
-          <Button>
-            <PlusCircle />
-            Add Server
-          </Button>
-        </AddServerDialog>
-      </div>
+      {!showOnlyFavorites && (
+         <div className="flex items-center justify-between mb-4">
+            <h2 className="text-2xl font-semibold font-headline">Your Servers</h2>
+            <AddServerDialog 
+            open={isAddDialogOpen} 
+            onOpenChange={(isOpen) => {
+                setAddDialogOpen(isOpen);
+                if (!isOpen) fetchServersAndUser();
+            }}
+            >
+            <Button>
+                <PlusCircle />
+                Add Server
+            </Button>
+            </AddServerDialog>
+        </div>
+      )}
+     
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {sortedServers.map((server) => {
+        {displayedServers.map((server) => {
           const isOwner = server.ownerId === currentUser?._id;
           const isFavorite = currentUser?.favorites?.includes(server.id!);
 
@@ -267,16 +277,16 @@ export function ServerList() {
             </CardFooter>
           </Card>
         )})}
-         {servers.length === 0 && (
+         {displayedServers.length === 0 && (
           <Card className="md:col-span-3 flex flex-col items-center justify-center p-8 text-center">
             <CardHeader>
-              <CardTitle>No Servers Found</CardTitle>
+              <CardTitle>{showOnlyFavorites ? "No Favorite Servers" : "No Servers Found"}</CardTitle>
               <CardDescription>
-                You haven't added any servers yet. Click the button above to get started.
+                {showOnlyFavorites ? "You haven't marked any servers as favorites yet. Click the star icon on a server to add it." : "You haven't added any servers yet. Click the 'Add Server' button to get started."}
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <HardDrive className="size-16 text-muted-foreground" />
+                 {showOnlyFavorites ? <Star className="size-16 text-muted-foreground" /> : <HardDrive className="size-16 text-muted-foreground" />}
             </CardContent>
           </Card>
         )}
