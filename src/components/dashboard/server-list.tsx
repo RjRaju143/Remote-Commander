@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import type { Server } from "@/lib/types";
 import { HardDrive, MoreVertical, PlusCircle, Wifi, WifiOff, Edit, Trash2, Terminal, Loader2, Users, User, Share2, Cpu, MemoryStick, Database, RefreshCcw, Star } from "lucide-react";
 import { AddServerDialog } from "./add-server-dialog";
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useTransition } from "react";
 import { getServers, deleteServer, getCurrentUser, toggleFavoriteServer, getFavoriteServers } from "@/lib/actions";
 import {
   DropdownMenu,
@@ -106,31 +106,25 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
   const [editingServer, setEditingServer] = useState<Server | null>(null);
   const [sharingServer, setSharingServer] = useState<Server | null>(null);
   const [deletingServerId, setDeletingServerId] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
   const router = useRouter();
 
   const totalPages = Math.ceil(totalServers / SERVERS_PER_PAGE);
 
   const fetchServersAndUser = useCallback(async () => {
+    let serversResponse;
     if (showOnlyFavorites) {
-      const [{ servers: favServers, total }, user] = await Promise.all([
-          getFavoriteServers({ page: currentPage, limit: SERVERS_PER_PAGE }), 
-          getCurrentUser()
-        ]);
-      const formattedServers = favServers.map((s: any) => ({ ...s, id: s._id.toString(), status: s.status || 'inactive' }));
-      setServers(formattedServers);
-      setTotalServers(total);
-      setCurrentUser(user);
+        serversResponse = await getFavoriteServers({ page: currentPage, limit: SERVERS_PER_PAGE });
     } else {
-      const [{ servers, total }, user] = await Promise.all([
-        getServers({ page: currentPage, limit: SERVERS_PER_PAGE }),
-        getCurrentUser()
-      ]);
-      const formattedServers = servers.map((s: any) => ({ ...s, id: s._id.toString(), status: s.status || 'inactive' }));
-      setServers(formattedServers);
-      setTotalServers(total);
-      setCurrentUser(user);
+        serversResponse = await getServers({ page: currentPage, limit: SERVERS_PER_PAGE });
     }
+    const user = await getCurrentUser();
+
+    const formattedServers = serversResponse.servers.map((s: any) => ({ ...s, id: s._id.toString(), status: s.status || 'inactive' }));
+    setServers(formattedServers);
+    setTotalServers(serversResponse.total);
+    setCurrentUser(user);
   }, [currentPage, showOnlyFavorites]);
 
   useEffect(() => {
@@ -157,29 +151,34 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
     }
   };
 
-  const handleToggleFavorite = async (serverId: string) => {
-    const originalUser = currentUser;
-    // Optimistic UI update
-    setCurrentUser(prevUser => {
+  const handleToggleFavorite = (serverId: string) => {
+      const isCurrentlyFavorite = currentUser?.favorites?.includes(serverId);
+      
+      // Optimistic UI update
+      setCurrentUser(prevUser => {
         if (!prevUser) return null;
-        const newFavorites = prevUser.favorites?.includes(serverId)
-            ? prevUser.favorites.filter(id => id !== serverId)
+        const newFavorites = isCurrentlyFavorite
+            ? prevUser.favorites?.filter(id => id !== serverId)
             : [...(prevUser.favorites || []), serverId];
         return { ...prevUser, favorites: newFavorites };
-    });
-
-    try {
-        await toggleFavoriteServer(serverId);
-        // Reset to page 1 and re-fetch, this handles removing last item on a page
-        if (currentPage > 1 && servers.length === 1) {
-            setCurrentPage(currentPage - 1);
-        } else {
-            fetchServersAndUser();
+      });
+      
+      startTransition(async () => {
+        try {
+            await toggleFavoriteServer(serverId);
+            if (showOnlyFavorites) {
+              // If on favorites page, re-fetch to handle removal from list
+              fetchServersAndUser();
+            }
+        } catch (e) {
+            // Revert on error
+            setCurrentUser(prevUser => {
+                if (!prevUser) return null;
+                return { ...prevUser, favorites: currentUser?.favorites };
+            });
+            toast({ variant: "destructive", title: "Error", description: "Could not update favorites." });
         }
-    } catch(e) {
-        setCurrentUser(originalUser); // Revert on error
-        toast({ variant: "destructive", title: "Error", description: "Could not update favorites." });
-    }
+      });
   };
 
   const handleDelete = async () => {
@@ -243,6 +242,7 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
                         size="icon"
                         className="text-muted-foreground hover:text-yellow-400 -ml-2"
                         onClick={() => handleToggleFavorite(server.id!)}
+                        disabled={isPending}
                     >
                        <Star className={cn("size-5", isFavorite && "fill-yellow-400 text-yellow-400")} />
                     </Button>

@@ -248,7 +248,7 @@ export async function handleLogout() {
   redirect('/');
 }
 
-export async function getServers({ page = 1, limit = 6 }: { page?: number, limit?: number } = {}) {
+export async function getServers({ page = 1, limit = 6, noSort = false }: { page?: number, limit?: number, noSort?: boolean } = {}) {
   const user = await getCurrentUser();
   if (!user) {
     return { servers: [], total: 0 };
@@ -270,7 +270,7 @@ export async function getServers({ page = 1, limit = 6 }: { page?: number, limit
         } 
       };
 
-    const serversPipeline = [
+    const serversPipeline: any[] = [
       matchStage,
       {
         $lookup: {
@@ -288,31 +288,33 @@ export async function getServers({ page = 1, limit = 6 }: { page?: number, limit
           isFavorite: { $in: ["$_id", user.favorites?.map(fav => new ObjectId(fav)) || []] }
         }
       },
-      {
-        $sort: { isFavorite: -1, name: 1 }
-      },
-      {
-        $skip: skip
-      },
-      {
-        $limit: limit
-      },
-      {
-        $project: {
-          name: 1,
-          ip: 1,
-          port: 1,
-          username: 1,
-          status: 1,
-          ownerId: 1,
-          guestIds: 1,
-          owner: {
-            _id: '$ownerInfo._id',
-            email: '$ownerInfo.email'
-          }
+      
+    ];
+
+    if (!noSort) {
+      serversPipeline.push({ $sort: { isFavorite: -1, name: 1 } });
+    } else {
+      serversPipeline.push({ $sort: { name: 1 } });
+    }
+
+    serversPipeline.push({ $skip: skip });
+    serversPipeline.push({ $limit: limit });
+    serversPipeline.push({
+      $project: {
+        name: 1,
+        ip: 1,
+        port: 1,
+        username: 1,
+        status: 1,
+        ownerId: 1,
+        guestIds: 1,
+        owner: {
+          _id: '$ownerInfo._id',
+          email: '$ownerInfo.email'
         }
       }
-    ];
+    });
+
 
     const servers = await db.collection("servers").aggregate(serversPipeline).toArray();
     
@@ -998,7 +1000,7 @@ export async function toggleFavoriteServer(serverId: string) {
 
         await db.collection('users').updateOne({ _id: userObjectId }, updateOperation);
 
-        revalidatePath('/dashboard');
+        // We only revalidate the favorites page, so the main dashboard doesn't re-sort
         revalidatePath('/dashboard/favorites');
         return { success: true };
     } catch (error) {
