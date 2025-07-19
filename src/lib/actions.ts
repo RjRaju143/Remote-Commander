@@ -1,7 +1,7 @@
 
 'use server';
 
-import { classifyCommand } from "@/ai/flows/classify-command";
+import { generateCommand } from "@/ai/flows/generate-command";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -18,36 +18,36 @@ import type { Server } from "./types";
 import { Client } from 'ssh2';
 
 
-export interface ClassifyCommandState {
+export interface GenerateCommandState {
   result?: {
-    category: string;
-    confidence: number;
+    command: string;
+    description: string;
   };
   error?: string;
   input?: string;
 }
 
-const CommandSchema = z.string().min(1, { message: "Command is required." });
+const RequestSchema = z.string().min(1, { message: "Request is required." });
 
-export async function handleClassifyCommand(
-  prevState: ClassifyCommandState,
+export async function handleGenerateCommand(
+  prevState: GenerateCommandState,
   formData: FormData
-): Promise<ClassifyCommandState> {
-  const command = formData.get("command");
-  const validatedCommand = CommandSchema.safeParse(command);
+): Promise<GenerateCommandState> {
+  const request = formData.get("request");
+  const validatedRequest = RequestSchema.safeParse(request);
 
-  if (!validatedCommand.success) {
-    return { error: "Please enter a valid command." };
+  if (!validatedRequest.success) {
+    return { error: "Please enter a valid request." };
   }
 
-  const input = validatedCommand.data;
+  const input = validatedRequest.data;
 
   try {
-    const result = await classifyCommand({ command: input });
+    const result = await generateCommand({ request: input });
     return { result, input };
   } catch (error) {
-    console.error("Classification failed:", error);
-    return { error: "AI classification failed. Please try again.", input };
+    console.error("Generation failed:", error);
+    return { error: "AI generation failed. Please try again.", input };
   }
 }
 
