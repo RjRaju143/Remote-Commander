@@ -81,8 +81,8 @@ export default function SupportPage() {
                 <div>
                     <h3 className="font-semibold">Email Support</h3>
                     <p className="text-sm text-muted-foreground">
-                        <a href="mailto:support@remotecommander.com" className="hover:underline">
-                            support@remotecommander.com
+                        <a href="mailto:bangarraju1152@gmail.com" className="hover:underline">
+                            bangarraju1152@gmail.com
                         </a>
                     </p>
                 </div>
@@ -92,12 +92,12 @@ export default function SupportPage() {
                 <div>
                     <h3 className="font-semibold">Phone Support</h3>
                     <p className="text-sm text-muted-foreground">
-                        Not available at this time.
+                        +91 7702481430.
                     </p>
                 </div>
              </div>
              <div className="text-sm text-muted-foreground pt-4">
-                Our support team is available Monday to Friday, 9 AM to 5 PM EST. We typically respond to emails within 24 hours.
+                Our support team is available Monday to Friday, 9 AM to 5 PM IST. We typically respond to emails within 24 hours.
              </div>
           </CardContent>
         </Card>
