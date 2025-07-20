@@ -7,7 +7,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
-import { Bell, Check, Server, ShieldCheck, LifeBuoy, Trash2 } from "lucide-react";
+import { Bell, Check, Server, ShieldCheck, LifeBuoy, Trash2, Loader2 } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
 import {
   getNotifications,
