@@ -1275,3 +1275,17 @@ export async function markAllNotificationsAsRead() {
     }
 }
     
+export async function deleteAllNotifications() {
+    const user = await getCurrentUser();
+    if (!user) return { error: "Unauthorized" };
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        await db.collection('notifications').deleteMany({ userId: new ObjectId(user._id) });
+        return { success: true };
+    } catch (error) {
+        console.error("Failed to delete all notifications:", error);
+        return { error: "Database error" };
+    }
+}

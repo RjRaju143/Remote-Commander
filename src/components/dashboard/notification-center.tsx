@@ -7,19 +7,31 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
-import { Bell, Check, Server, ShieldCheck, LifeBuoy } from "lucide-react";
+import { Bell, Check, Server, ShieldCheck, LifeBuoy, Trash2 } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
 import {
   getNotifications,
   markAllNotificationsAsRead,
   markNotificationAsRead,
+  deleteAllNotifications,
 } from "@/lib/actions";
 import { type Notification } from "@/models/Notification";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import Link from "next/link";
 import { formatDistanceToNow } from 'date-fns';
 import { cn } from "@/lib/utils";
 import { Skeleton } from "../ui/skeleton";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useToast } from "@/hooks/use-toast";
+
 
 function NotificationIcon({ type }: { type: string }) {
     switch (type) {
@@ -43,6 +55,8 @@ export function NotificationCenter() {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const { toast } = useToast();
 
   const fetchNotifications = async () => {
     setIsLoading(true);
@@ -58,24 +72,45 @@ export function NotificationCenter() {
 
   const handleMarkAsRead = (id: string) => {
     startTransition(async () => {
-        // Optimistic update
         setNotifications(prev => prev.map(n => n._id === id ? { ...n, isRead: true } : n));
         setUnreadCount(prev => Math.max(0, prev - 1));
         await markNotificationAsRead(id);
-        // No need to re-fetch, optimistic update handles it
     });
   };
 
   const handleMarkAllAsRead = () => {
     startTransition(async () => {
-        // Optimistic update
         setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
         setUnreadCount(0);
         await markAllNotificationsAsRead();
     });
   };
+  
+  const handleClearAll = () => {
+    startTransition(async () => {
+      setNotifications([]);
+      setUnreadCount(0);
+      const result = await deleteAllNotifications();
+      if (result.error) {
+        toast({
+          variant: 'destructive',
+          title: "Error",
+          description: result.error
+        });
+        fetchNotifications(); // Re-fetch on error to restore state
+      } else {
+         toast({
+          title: "Notifications Cleared",
+          description: "Your notification list has been cleared.",
+        });
+      }
+      setShowClearConfirm(false);
+    });
+  };
+
 
   return (
+    <>
     <Popover open={isOpen} onOpenChange={setIsOpen}>
       <PopoverTrigger asChild>
         <Button variant="ghost" size="icon" className="rounded-full relative">
@@ -143,10 +178,43 @@ export function NotificationCenter() {
         </ScrollArea>
         {notifications.length > 0 && (
             <div className="p-2 border-t text-center">
-                {/* Potentially a "View all notifications" link here in the future */}
+                 <Button
+                    variant="destructive"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => setShowClearConfirm(true)}
+                    disabled={isPending}
+                >
+                    <Trash2 className="mr-2" />
+                    Clear All Notifications
+                </Button>
             </div>
         )}
       </PopoverContent>
     </Popover>
+
+     <AlertDialog open={showClearConfirm} onOpenChange={setShowClearConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete all of
+              your notifications.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleClearAll}
+              className="bg-destructive hover:bg-destructive/90"
+              disabled={isPending}
+            >
+              {isPending && <Loader2 className="animate-spin mr-2" />}
+              Continue
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
