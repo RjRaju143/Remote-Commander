@@ -36,7 +36,7 @@ function SubmitButton() {
 }
 
 export function ShareDialog({ server, open, onOpenChange }: ShareDialogProps) {
-  const { toast } = useToast();
+  const { toast, notify } = useToast();
   const [email, setEmail] = useState("");
 
   const handleShareAction = async () => {
@@ -53,6 +53,9 @@ export function ShareDialog({ server, open, onOpenChange }: ShareDialogProps) {
             title: "Access Granted",
             description: `${email} now has access to ${server.name}.`,
         });
+        if (result.notification) {
+            notify();
+        }
         onOpenChange(false);
     }
   }

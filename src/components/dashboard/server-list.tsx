@@ -107,7 +107,7 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
   const [sharingServer, setSharingServer] = useState<Server | null>(null);
   const [deletingServerId, setDeletingServerId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const { toast } = useToast();
+  const { toast, notify } = useToast();
   const router = useRouter();
 
   const totalPages = Math.ceil(totalServers / SERVERS_PER_PAGE);
@@ -153,6 +153,7 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
 
   const handleToggleFavorite = (serverId: string) => {
       const isCurrentlyFavorite = currentUser?.favorites?.includes(serverId);
+      const originalFavorites = currentUser?.favorites;
       
       // Optimistic UI update
       setCurrentUser(prevUser => {
@@ -165,7 +166,10 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
       
       startTransition(async () => {
         try {
-            await toggleFavoriteServer(serverId);
+            const result = await toggleFavoriteServer(serverId);
+            if (result.notification) {
+                notify();
+            }
             if (showOnlyFavorites) {
               // If on favorites page, re-fetch to handle removal from list
               fetchServersAndUser();
@@ -174,7 +178,7 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
             // Revert on error
             setCurrentUser(prevUser => {
                 if (!prevUser) return null;
-                return { ...prevUser, favorites: currentUser?.favorites };
+                return { ...prevUser, favorites: originalFavorites };
             });
             toast({ variant: "destructive", title: "Error", description: "Could not update favorites." });
         }

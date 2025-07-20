@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 
 function ChangePasswordForm() {
-    const { toast } = useToast();
+    const { toast, notify } = useToast();
     const [state, formAction, pending] = useActionState(handleChangePassword, undefined);
     const [showCurrent, setShowCurrent] = useState(false);
     const [showNew, setShowNew] = useState(false);
@@ -33,12 +33,15 @@ function ChangePasswordForm() {
                 title: "Success",
                 description: "Your password has been changed successfully.",
             });
+            if (state.notification) {
+                notify();
+            }
             // This is a simple way to reset form fields after successful submission with useActionState
             // by targeting the form element and calling reset().
             const form = document.getElementById('changePasswordForm') as HTMLFormElement;
             form?.reset();
         }
-    }, [state, toast]);
+    }, [state, toast, notify]);
 
     return (
         <form action={formAction} id="changePasswordForm">

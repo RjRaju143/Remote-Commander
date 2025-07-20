@@ -1,3 +1,4 @@
+
 "use client"
 
 // Inspired by react-hot-toast library
@@ -23,6 +24,7 @@ const actionTypes = {
   UPDATE_TOAST: "UPDATE_TOAST",
   DISMISS_TOAST: "DISMISS_TOAST",
   REMOVE_TOAST: "REMOVE_TOAST",
+  NOTIFY: "NOTIFY",
 } as const
 
 let count = 0
@@ -51,9 +53,13 @@ type Action =
       type: ActionType["REMOVE_TOAST"]
       toastId?: ToasterToast["id"]
     }
+  | {
+      type: ActionType["NOTIFY"]
+    }
 
 interface State {
-  toasts: ToasterToast[]
+  toasts: ToasterToast[];
+  lastNotificationTimestamp: number | null;
 }
 
 const toastTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
@@ -126,12 +132,17 @@ export const reducer = (state: State, action: Action): State => {
         ...state,
         toasts: state.toasts.filter((t) => t.id !== action.toastId),
       }
+    case "NOTIFY":
+        return {
+            ...state,
+            lastNotificationTimestamp: new Date().getTime(),
+        }
   }
 }
 
 const listeners: Array<(state: State) => void> = []
 
-let memoryState: State = { toasts: [] }
+let memoryState: State = { toasts: [], lastNotificationTimestamp: null }
 
 function dispatch(action: Action) {
   memoryState = reducer(memoryState, action)
@@ -188,6 +199,7 @@ function useToast() {
     ...state,
     toast,
     dismiss: (toastId?: string) => dispatch({ type: "DISMISS_TOAST", toastId }),
+    notify: () => dispatch({ type: "NOTIFY" })
   }
 }
 

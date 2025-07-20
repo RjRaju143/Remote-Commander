@@ -26,7 +26,7 @@ type AddServerDialogProps = {
 };
 
 export function AddServerDialog({ children, open, onOpenChange }: AddServerDialogProps) {
-  const { toast } = useToast();
+  const { toast, notify } = useToast();
   const [name, setName] = useState('');
   const [ip, setIp] = useState('');
   const [port, setPort] = useState(22);
@@ -46,6 +46,9 @@ export function AddServerDialog({ children, open, onOpenChange }: AddServerDialo
         title: "Server Added",
         description: `${name} has been added successfully.`,
       });
+      if (result.notification) {
+          notify();
+      }
        // Reset form and close dialog
       setName('');
       setIp('');

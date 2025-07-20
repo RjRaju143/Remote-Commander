@@ -48,7 +48,7 @@ const faqs = [
 
 
 function SupportForm() {
-  const { toast } = useToast();
+  const { toast, notify } = useToast();
   const [state, formAction, pending] = useActionState(handleSupportRequest, undefined);
 
   useEffect(() => {
@@ -64,10 +64,13 @@ function SupportForm() {
         title: "Message Sent!",
         description: "Thank you for contacting us. We'll get back to you shortly.",
       });
+      if (state.notification) {
+          notify();
+      }
       const form = document.getElementById('supportForm') as HTMLFormElement;
       form?.reset();
     }
-  }, [state, toast]);
+  }, [state, toast, notify]);
 
   return (
     <Card>

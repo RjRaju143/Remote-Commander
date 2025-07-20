@@ -56,7 +56,7 @@ export function NotificationCenter() {
   const [isLoading, setIsLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const { toast } = useToast();
+  const { toast, lastNotificationTimestamp } = useToast();
 
   const fetchNotifications = async () => {
     setIsLoading(true);
@@ -70,10 +70,20 @@ export function NotificationCenter() {
     fetchNotifications();
   }, []);
 
+  useEffect(() => {
+    if (lastNotificationTimestamp) {
+        fetchNotifications();
+    }
+  }, [lastNotificationTimestamp]);
+
+
   const handleMarkAsRead = (id: string) => {
     startTransition(async () => {
-        setNotifications(prev => prev.map(n => n._id === id ? { ...n, isRead: true } : n));
-        setUnreadCount(prev => Math.max(0, prev - 1));
+        const isAlreadyRead = notifications.find(n => n._id === id)?.isRead;
+        if (!isAlreadyRead) {
+            setNotifications(prev => prev.map(n => n._id === id ? { ...n, isRead: true } : n));
+            setUnreadCount(prev => Math.max(0, prev - 1));
+        }
         await markNotificationAsRead(id);
     });
   };
@@ -88,8 +98,7 @@ export function NotificationCenter() {
   
   const handleClearAll = () => {
     startTransition(async () => {
-      setNotifications([]);
-      setUnreadCount(0);
+      setShowClearConfirm(false);
       const result = await deleteAllNotifications();
       if (result.error) {
         toast({
@@ -103,8 +112,9 @@ export function NotificationCenter() {
           title: "Notifications Cleared",
           description: "Your notification list has been cleared.",
         });
+        setNotifications([]);
+        setUnreadCount(0);
       }
-      setShowClearConfirm(false);
     });
   };
 
