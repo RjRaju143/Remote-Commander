@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { getCurrentUser, handleChangePassword, handleUpdateProfile } from "@/lib/actions";
+import { handleChangePassword, handleUpdateProfile, getUserForProfile } from "@/lib/actions";
 import { useEffect, useState, useCallback, useActionState } from "react";
 import type { User } from "@/models/User";
 import { useToast } from "@/hooks/use-toast";
@@ -135,7 +135,7 @@ export default function SettingsPage() {
   const [user, setUser] = useState<User | null>(null);
 
   const fetchUser = useCallback(async () => {
-    const userData = await getCurrentUser();
+    const userData = await getUserForProfile();
     setUser(userData);
   }, []);
 
