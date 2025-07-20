@@ -1,4 +1,6 @@
 
+"use client";
+
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Bell, User } from "lucide-react";
@@ -11,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import Link from "next/link";
+import { NotificationCenter } from "@/components/dashboard/notification-center";
 
 export function DashboardHeader() {
   return (
@@ -19,10 +22,7 @@ export function DashboardHeader() {
         <SidebarTrigger />
       </div>
       <div className="flex w-full items-center justify-end gap-4">
-        <Button variant="ghost" size="icon" className="rounded-full">
-          <Bell className="h-5 w-5" />
-          <span className="sr-only">Toggle notifications</span>
-        </Button>
+        <NotificationCenter />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="secondary" size="icon" className="rounded-full">
