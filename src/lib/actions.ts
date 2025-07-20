@@ -1,4 +1,5 @@
 
+
 'use server';
 
 import { generateCommand } from "@/ai/flows/generate-command";
@@ -588,10 +589,14 @@ export async function updateServer(serverId: string, serverData: unknown) {
     if (result.matchedCount === 0) {
       return { error: "Server not found or you do not have permission to update it." };
     }
+    
+    const serverName = validatedServer.data.name || 'the server';
+    await createNotification(user._id, `You updated the server: "${serverName}".`, 'server_added');
+
 
     revalidatePath("/dashboard");
     revalidatePath(`/dashboard/server/${serverId}`);
-    return { success: true };
+    return { success: true, notification: true };
   } catch (error) {
     console.error("Failed to update server:", error);
     return { error: "Could not update server in the database." };
@@ -612,17 +617,27 @@ export async function deleteServer(serverId: string) {
     const client = await clientPromise;
     const db = client.db();
     
-    const result = await db.collection("servers").deleteOne({ 
+    // Find server first to get name for notification
+    const serverToDelete = await db.collection("servers").findOne({ 
       _id: new ObjectId(serverId),
       ownerId: new ObjectId(user._id),
     });
 
-    if (result.deletedCount === 0) {
+    if (!serverToDelete) {
       return { error: "Server not found or you do not have permission to delete it." };
     }
+    
+    const result = await db.collection("servers").deleteOne({ _id: serverToDelete._id });
+
+    if (result.deletedCount === 0) {
+      // This case should be rare given the findOne check, but it's good practice
+      return { error: "Failed to delete the server after finding it." };
+    }
+
+    await createNotification(user._id, `You deleted the server: "${serverToDelete.name}".`, 'server_added');
 
     revalidatePath("/dashboard");
-    return { success: true };
+    return { success: true, notification: true };
   } catch (error) {
     console.error("Failed to delete server:", error);
     return { error: "Could not delete server from the database." };
