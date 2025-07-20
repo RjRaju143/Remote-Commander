@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -192,6 +193,9 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
       toast({ variant: "destructive", title: "Error", description: result.error });
     } else {
       toast({ title: "Success", description: "Server deleted successfully." });
+      if (result.notification) {
+          notify();
+      }
       // Reset to page 1 and re-fetch, this handles removing last item on a page
        if (currentPage > 1 && servers.length === 1) {
             setCurrentPage(currentPage - 1);
@@ -405,3 +409,5 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
     </section>
   );
 }
+
+    

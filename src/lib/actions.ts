@@ -1306,3 +1306,5 @@ export async function deleteAllNotifications() {
         return { error: "Database error" };
     }
 }
+
+    
