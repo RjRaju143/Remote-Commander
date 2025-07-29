@@ -46,9 +46,6 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # Copy public assets
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
-# Copy your SQLite database
-COPY --from=builder --chown=nextjs:nodejs /app/velocity.sqlite ./velocity.sqlite
-
 # Set the user to the non-root user
 USER nextjs
 
