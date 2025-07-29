@@ -4,7 +4,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Install dependencies
-COPY package.json package-lock.json ./
+COPY package*.json ./
 # Using --legacy-peer-deps for broader compatibility if needed, but try without first.
 # If issues arise, consider: RUN npm install --legacy-peer-deps
 RUN npm install
