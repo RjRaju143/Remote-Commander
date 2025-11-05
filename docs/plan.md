@@ -55,25 +55,6 @@ Stores Linux server credentials.
 
 ---
 
-## 🔌 Architecture Diagram
-
-```text
-  [User] ⇄ [Next.js App]
-
-     ⬇ Authenticated
-
-  /servers
-     ⇄ MongoDB ← stores login credentials (encrypted)
-  
-  /terminal (WebSocket)
-     ⇄ ssh2 stream
-     ⇄ Remote Linux server
-
-     ⇅ xterm.js UI (live terminal)
-```
-
----
-
 ## 🛡 Security Rules
 
 | Rule                                | Purpose                  |
@@ -88,19 +69,19 @@ Stores Linux server credentials.
 
 ## ✅ Supported Features
 
-* [ Y ] SSH via private key (or password, optional)
-* [ X ] Interactive commands (`nano`, `htop`, etc.)
-* [ Y ] Streamed output with `xterm.js`
-* [ Y ] MongoDB-stored server credentials (one per user)
+* ✅ SSH via private key (or password, optional)
+* ❌ Interactive commands (`nano`, `htop`, etc.)
+* ✅ Streamed output with `xterm.js`
+* ✅ MongoDB-stored server credentials (one per user)
 
 ---
 
 ## ✅ Included (By Design)
 
-* [ X ] command logging in log table
-* [ X ] audit trails or history
-* [ Y ] user roles or teams (user management)
-* [ X ] (SFTP) file upload/download
+* ❌ command logging in log table
+* ❌ audit trails or history
+* ✅ user roles or teams (user management)
+* ❌ (SFTP) file upload/download
 
 ---
 
@@ -108,9 +89,9 @@ Stores Linux server credentials.
 
 | Feature               | Add Later? |
 | --------------------- | ---------- |
-| Servers health status | ✅          |
-| Command whitelist     | ✅          |
-| File browser (SFTP)   | ✅          |
-| Role-based access     | ✅  [Done]        |
+| Servers health status | ❌         |
+| Command whitelist     | ❌         |
+| File browser (SFTP)   | ❌         |
+| Role-based access     | ✅         |
 
 ---
