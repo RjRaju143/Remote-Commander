@@ -232,7 +232,7 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
                <div className="space-y-3 text-sm text-muted-foreground">
                     <div className="flex items-center gap-2">
                         <Cpu className="text-primary"/>
-                        <span >CPU, Memory, and Disk usage can be checked on the connection page.</span>
+                        {/* <span >CPU, Memory, and Disk usage can be checked on the connection page.</span> */}
                     </div>
                 </div>
             </CardContent>
