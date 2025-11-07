@@ -507,46 +507,49 @@ export async function deleteServer(serverId: string) {
 
 
 export async function testServerConnection(serverId: string): Promise<{ success: boolean; error?: string }> {
-  const user = await getCurrentUser();
-  if (!user) {
-      return { success: false, error: 'Authentication failed. Please log in again.' };
-  }
-  const creds = await getServerByIdHelper(serverId, user._id);
-  if (!creds) {
-    return { success: false, error: 'Server not found or you do not have permission.' };
-  }
-  if (creds.privateKey) {
-    creds.privateKey = decrypt(creds.privateKey);
-  }
+    const user = await getCurrentUser();
+    if (!user) {
+        return { success: false, error: 'Authentication failed. Please log in again.' };
+    }
+    const creds = await getServerByIdHelper(serverId, user._id);
+    if (!creds) {
+        return { success: false, error: 'Server not found or you do not have permission.' };
+    }
 
-  return new Promise((resolve) => {
-    const conn = new Client();
-    conn
-      .on('ready', () => {
-        conn.end();
-        resolve({ success: true });
-      })
-      .on('error', (err: Error) => {
-        let errorMessage = 'An unknown connection error occurred.';
-        if (err.message.includes('ECONNREFUSED')) {
-            errorMessage = 'Connection refused by server.';
-        } else if (err.message.includes('ENOTFOUND')) {
-            errorMessage = 'Server IP address not found.';
-        } else if (err.message.toLowerCase().includes('authentication')) {
-            errorMessage = 'Authentication failed. Check username and private key.';
-        } else if (err.message.includes('Timed out')) {
-            errorMessage = 'Connection timed out. Server may be offline or firewall is blocking the connection.';
+    let privateKey;
+    if (creds.privateKey) {
+        try {
+            privateKey = decrypt(creds.privateKey);
+        } catch (e) {
+            return { success: false, error: 'Failed to decrypt private key. It may be corrupted.' };
         }
-        resolve({ success: false, error: errorMessage });
-      })
-      .connect({
-        host: creds.ip,
-        port: Number(creds.port),
-        username: creds.username,
-        privateKey: creds.privateKey,
-        readyTimeout: 10000,
-      });
-  });
+    }
+
+    return new Promise((resolve) => {
+        const conn = new Client();
+        conn.on('ready', () => {
+            conn.end();
+            resolve({ success: true });
+        }).on('error', (err: Error) => {
+            let errorMessage = 'An unknown connection error occurred.';
+            if (err.message.includes('ECONNREFUSED')) {
+                errorMessage = 'Connection refused by server.';
+            } else if (err.message.includes('ENOTFOUND')) {
+                errorMessage = 'Server IP address not found.';
+            } else if (err.message.toLowerCase().includes('authentication')) {
+                errorMessage = 'Authentication failed. Check username and private key.';
+            } else if (err.message.includes('Timed out')) {
+                errorMessage = 'Connection timed out. Server may be offline or firewall is blocking the connection.';
+            }
+            resolve({ success: false, error: errorMessage });
+        }).connect({
+            host: creds.ip,
+            port: Number(creds.port),
+            username: creds.username,
+            privateKey: privateKey,
+            readyTimeout: 10000,
+        });
+    });
 }
 
 // Sharing Actions

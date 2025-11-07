@@ -1,4 +1,5 @@
 
+
 'use client';
 
 import { getServerById, testServerConnection } from '@/lib/actions';
@@ -17,6 +18,7 @@ import { Separator } from '@/components/ui/separator';
 type ConnectionStatus = 'connecting' | 'connected' | 'error';
 
 export default function ServerShellPage({ params }: { params: { serverId: string } }) {
+    const { serverId } = params;
     const [server, setServer] = useState<Server | null>(null);
     const [status, setStatus] = useState<ConnectionStatus>('connecting');
     const [error, setError] = useState<string | null>(null);
@@ -24,7 +26,7 @@ export default function ServerShellPage({ params }: { params: { serverId: string
 
     useEffect(() => {
         const fetchServerAndTestConnection = async () => {
-            const serverData = await getServerById(params.serverId);
+            const serverData = await getServerById(serverId);
             if (!serverData) {
                 // This will trigger the notFound UI
                 notFound();
@@ -32,7 +34,7 @@ export default function ServerShellPage({ params }: { params: { serverId: string
             }
             setServer(serverData);
 
-            const result = await testServerConnection(params.serverId);
+            const result = await testServerConnection(serverId);
             if (result.success) {
                 setStatus('connected');
             } else {
@@ -42,7 +44,7 @@ export default function ServerShellPage({ params }: { params: { serverId: string
         };
 
         fetchServerAndTestConnection();
-    }, [params.serverId]);
+    }, [serverId]);
 
     const renderContent = () => {
         switch (status) {
@@ -78,7 +80,7 @@ export default function ServerShellPage({ params }: { params: { serverId: string
                  return (
                     <div className="flex-1 min-h-0 flex flex-col gap-4">
                         <div className="flex-grow min-h-[400px]">
-                           <ShellClientWrapper serverId={params.serverId} username={server.username} />
+                           <ShellClientWrapper serverId={serverId} username={server.username} />
                         </div>
                         <Separator />
                         <CommandClassifier />
