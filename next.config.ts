@@ -23,19 +23,10 @@ const nextConfig: NextConfig = {
   webpack: (config, { isServer, nextRuntime }) => {
     if (isServer) {
         config.externals.push({
-            'ws': 'ws',
             'ssh2': 'commonjs ssh2',
         });
     }
     return config;
-  },
-  async rewrites() {
-    return [
-        {
-            source: '/api/ws',
-            destination: '/api/ws'
-        }
-    ]
   }
 };
 
