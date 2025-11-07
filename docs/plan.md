@@ -69,10 +69,10 @@ Stores Linux server credentials.
 
 ## ✅ Supported Features
 
-* ✅ SSH via private key (or password, optional)
-* ❌ Interactive commands (`nano`, `htop`, etc.)
+* ✅ Interactive commands (`nano`, `htop`, etc.)
 * ✅ Streamed output with `xterm.js`
 * ✅ MongoDB-stored server credentials (one per user)
+* ❌ SSH via IPV6 and password (optional)
 
 ---
 
@@ -80,7 +80,7 @@ Stores Linux server credentials.
 
 * ❌ command logging in log table
 * ❌ audit trails or history
-* ✅ user roles or teams (user management)
+* ❌ user roles or teams (user management)
 * ❌ (SFTP) file upload/download
 
 ---
@@ -92,6 +92,6 @@ Stores Linux server credentials.
 | Servers health status | ❌         |
 | Command whitelist     | ❌         |
 | File browser (SFTP)   | ❌         |
-| Role-based access     | ✅         |
+| Role-based access     | ❌         |
 
 ---
