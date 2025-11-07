@@ -6,7 +6,7 @@ import { getSession } from '@/lib/shell-sessions';
 
 // GET request handler for polling output
 export async function GET(request: NextRequest, { params }: { params: { sessionId: string } }) {
-    const sessionId = params.sessionId;
+    const { sessionId } = params;
     const session = getSession(sessionId);
 
     if (!session) {
@@ -22,7 +22,7 @@ export async function GET(request: NextRequest, { params }: { params: { sessionI
 
 // POST request handler for sending input
 export async function POST(request: NextRequest, { params }: { params: { sessionId: string } }) {
-    const sessionId = params.sessionId;
+    const { sessionId } = params;
     const session = getSession(sessionId);
 
     if (!session) {
