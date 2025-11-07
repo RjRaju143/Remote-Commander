@@ -20,7 +20,9 @@ async function fetchApi(path: string, options: RequestInit = {}) {
     });
     if (!res.ok) {
         const errorData = await res.json().catch(() => ({ message: 'An unknown error occurred' }));
-        throw new Error(errorData.message || 'API request failed');
+        const error = new Error(errorData.message || 'API request failed');
+        (error as any).status = res.status;
+        throw error;
     }
     return res.json();
 }
@@ -41,13 +43,23 @@ export function Shell({ serverId }: { serverId: string; username: string }) {
       if (output && term.current) {
         term.current.write(atob(output));
       }
-    } catch (error) {
-      console.error('Polling error:', error);
-      if (term.current) {
-        term.current.write(`\r\n\x1b[1;31m*** Polling failed: ${(error as Error).message} ***\x1b[0m\r\n`);
-      }
-      // Stop polling on error
-      return;
+    } catch (error: any) {
+        // If the session is not found, it means it was closed (e.g., by typing 'exit').
+        // We can stop polling and avoid showing an error.
+        if (error.status === 404) {
+            console.log("Session ended. Stopping polling.");
+            if (term.current) {
+                term.current.write(`\r\n\x1b[1;33m*** Connection closed ***\x1b[0m\r\n`);
+            }
+            return;
+        }
+
+        console.error('Polling error:', error);
+        if (term.current) {
+            term.current.write(`\r\n\x1b[1;31m*** Polling failed: ${(error as Error).message} ***\x1b[0m\r\n`);
+        }
+        // Stop polling on other errors
+        return;
     }
 
     if (!isUnmounted.current) {
