@@ -1,114 +1,27 @@
-
-
 'use server';
 
-import { generateCommand } from "@/ai/flows/generate-command";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import clientPromise from "./mongodb";
 import { revalidatePath } from "next/cache";
 import { ServerSchema } from "@/models/Server";
-import CryptoJS from "crypto-js";
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { jwtVerify } from "jose";
 import type { User } from "@/models/User";
 import { ObjectId } from "mongodb";
 import type { Server } from "./types";
 import { Client } from 'ssh2';
 import nodemailer from 'nodemailer';
 import { NotificationModel, NotificationSchema, NotificationType } from "@/models/Notification";
-
+import { decrypt, encrypt, getServerById as getServerByIdHelper } from "./server-helpers";
+import { verifyJwt } from "./jwt";
 
 export interface GenerateCommandState {
-  result?: {
-    command: string;
-    description: string;
-  };
+  result?: any;
   error?: string;
   input?: string;
 }
-
-const RequestSchema = z.string().min(1, { message: "Request is required." });
-
-export async function handleGenerateCommand(
-  prevState: GenerateCommandState,
-  formData: FormData
-): Promise<GenerateCommandState> {
-  const request = formData.get("request");
-  const validatedRequest = RequestSchema.safeParse(request);
-
-  if (!validatedRequest.success) {
-    return { error: "Please enter a valid request." };
-  }
-
-  const input = validatedRequest.data;
-
-  try {
-    const result = await generateCommand({ request: input });
-    return { result, input };
-  } catch (error) {
-    console.error("Generation failed:", error);
-    return { error: "AI generation failed. Please try again.", input };
-  }
-}
-
-export interface ExecuteCommandState {
-  result?: string;
-  error?: string;
-}
-
-export async function handleExecuteCommand(
-  serverId: string,
-  prevState: ExecuteCommandState,
-  formData: FormData
-): Promise<ExecuteCommandState> {
-  const command = formData.get("command") as string;
-
-  if (!command) {
-    return { error: 'Command is required.' };
-  }
-  
-  const creds = await getServerById(serverId);
-  if (!creds) {
-    return { error: 'Server not found or you do not have permission to access it.' };
-  }
-  if (creds.privateKey) {
-    creds.privateKey = decrypt(creds.privateKey);
-  }
-
-  return new Promise((resolve) => {
-    const conn = new Client();
-    let output = '';
-
-    conn.on('ready', () => {
-      conn.exec(command, (err: Error, stream: any) => {
-        if (err) {
-          conn.end();
-          return resolve({ error: `Execution failed: ${err.message}` });
-        }
-        stream.on('close', () => {
-          conn.end();
-          resolve({ result: output });
-        }).on('data', (data: Buffer) => {
-          output += data.toString('utf8');
-        }).stderr.on('data', (data: Buffer) => {
-          output += data.toString('utf8');
-        });
-      });
-    }).on('error', (err: Error) => {
-      resolve({ error: `Connection failed: ${err.message}` });
-    }).connect({
-      host: creds.ip,
-      port: Number(creds.port),
-      username: creds.username,
-      privateKey: creds.privateKey,
-      readyTimeout: 10000,
-    });
-  });
-}
-
 
 export interface AuthState {
   error?: string;
@@ -124,7 +37,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
   throw new Error("JWT_SECRET environment variable is not set.");
 }
-const secret = new TextEncoder().encode(JWT_SECRET);
+
 
 export async function handleLogin(
   prevState: AuthState | undefined,
@@ -421,53 +334,9 @@ export async function getFavoriteServers({ page = 1, limit = 6 }: { page?: numbe
 export async function getServerById(serverId: string): Promise<Server | null> {
   const user = await getCurrentUser();
   if (!user) return null;
-
-  if (!ObjectId.isValid(serverId)) return null;
-  const serverObjectId = new ObjectId(serverId);
-  const userObjectId = new ObjectId(user._id);
-
-  try {
-    const client = await clientPromise;
-    const db = client.db();
-
-    // Find the server and check if the current user is either the owner or in the guestIds array
-    const server = await db.collection('servers').findOne({ 
-        _id: serverObjectId,
-        $or: [
-          { ownerId: userObjectId },
-          { guestIds: userObjectId }
-        ]
-    });
-    if (!server) return null;
-
-    const serverDoc = server as any;
-    const serverData = JSON.parse(JSON.stringify(serverDoc));
-    return { ...serverData, id: serverData._id.toString() };
-
-  } catch (error) {
-    console.error("Failed to fetch server:", error);
-    return null;
-  }
+  return getServerByIdHelper(serverId, user._id);
 }
 
-
-// Encryption/Decryption functions
-function encrypt(text: string): string {
-  const secret = process.env.ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error('ENCRYPTION_SECRET is not set in the environment variables.');
-  }
-  return CryptoJS.AES.encrypt(text, secret).toString();
-}
-
-function decrypt(ciphertext: string): string {
-  const secret = process.env.ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error('ENCRYPTION_SECRET is not set in the environment variables.');
-  }
-  const bytes = CryptoJS.AES.decrypt(ciphertext, secret);
-  return bytes.toString(CryptoJS.enc.Utf8);
-}
 
 
 export async function addServer(serverData: unknown) {
@@ -515,14 +384,6 @@ export async function addServer(serverData: unknown) {
 }
 
 
-async function verifyJwt(token: string) {
-  try {
-    const { payload } = await jwtVerify(token, secret);
-    return payload;
-  } catch (error) {
-    return null;
-  }
-}
 
 export async function getCurrentUser(): Promise<User | null> {
   const cookieStore = await cookies()
@@ -646,42 +507,49 @@ export async function deleteServer(serverId: string) {
 
 
 export async function testServerConnection(serverId: string): Promise<{ success: boolean; error?: string }> {
-  const creds = await getServerById(serverId);
-  if (!creds) {
-    return { success: false, error: 'Server not found or you do not have permission.' };
-  }
-  if (creds.privateKey) {
-    creds.privateKey = decrypt(creds.privateKey);
-  }
+    const user = await getCurrentUser();
+    if (!user) {
+        return { success: false, error: 'Authentication failed. Please log in again.' };
+    }
+    const creds = await getServerByIdHelper(serverId, user._id);
+    if (!creds) {
+        return { success: false, error: 'Server not found or you do not have permission.' };
+    }
 
-  return new Promise((resolve) => {
-    const conn = new Client();
-    conn
-      .on('ready', () => {
-        conn.end();
-        resolve({ success: true });
-      })
-      .on('error', (err: Error) => {
-        let errorMessage = 'An unknown connection error occurred.';
-        if (err.message.includes('ECONNREFUSED')) {
-            errorMessage = 'Connection refused by server.';
-        } else if (err.message.includes('ENOTFOUND')) {
-            errorMessage = 'Server IP address not found.';
-        } else if (err.message.toLowerCase().includes('authentication')) {
-            errorMessage = 'Authentication failed. Check username and private key.';
-        } else if (err.message.includes('Timed out')) {
-            errorMessage = 'Connection timed out. Server may be offline or firewall is blocking the connection.';
+    let privateKey;
+    if (creds.privateKey) {
+        try {
+            privateKey = decrypt(creds.privateKey);
+        } catch (e) {
+            return { success: false, error: 'Failed to decrypt private key. It may be corrupted.' };
         }
-        resolve({ success: false, error: errorMessage });
-      })
-      .connect({
-        host: creds.ip,
-        port: Number(creds.port),
-        username: creds.username,
-        privateKey: creds.privateKey,
-        readyTimeout: 10000,
-      });
-  });
+    }
+
+    return new Promise((resolve) => {
+        const conn = new Client();
+        conn.on('ready', () => {
+            conn.end();
+            resolve({ success: true });
+        }).on('error', (err: Error) => {
+            let errorMessage = 'An unknown connection error occurred.';
+            if (err.message.includes('ECONNREFUSED')) {
+                errorMessage = 'Connection refused by server.';
+            } else if (err.message.includes('ENOTFOUND')) {
+                errorMessage = 'Server IP address not found.';
+            } else if (err.message.toLowerCase().includes('authentication')) {
+                errorMessage = 'Authentication failed. Check username and private key.';
+            } else if (err.message.includes('Timed out')) {
+                errorMessage = 'Connection timed out. Server may be offline or firewall is blocking the connection.';
+            }
+            resolve({ success: false, error: errorMessage });
+        }).connect({
+            host: creds.ip,
+            port: Number(creds.port),
+            username: creds.username,
+            privateKey: privateKey,
+            readyTimeout: 10000,
+        });
+    });
 }
 
 // Sharing Actions
@@ -1128,14 +996,14 @@ This email was automatically generated by the Remote Commander application.
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol'; margin: 0; padding: 0; background-color: #f4f4f7; }
         .container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border: 1px solid #e2e2e7; border-radius: 8px; overflow: hidden; }
-        .header { background-color: #4f46e5; color: #ffffff; padding: 24px; text-align: center; }
+        .header { background-color: hsl(182, 100%, 75%); color: hsl(240, 6%, 10%); padding: 24px; text-align: center; }
         .header h1 { margin: 0; font-size: 24px; }
         .content { padding: 24px; color: #333333; }
-        .content h2 { color: #4f46e5; font-size: 18px; margin-top: 0; }
+        .content h2 { color: hsl(182, 100%, 75%); font-size: 18px; margin-top: 0; }
         .info-box { background-color: #f8f8fa; border: 1px solid #e2e2e7; border-radius: 4px; padding: 16px; margin-bottom: 24px; }
         .info-box p { margin: 0 0 8px; }
         .info-box strong { color: #555555; }
-        .message-box { white-space: pre-wrap; word-wrap: break-word; background-color: #f8f8fa; border: 1px solid #e2e2e7; padding: 16px; border-radius: 4px; font-family: 'Courier New', Courier, monospace; }
+        .message-box { white-space: pre-wrap; word-wrap: break-word; background-color: #f8f8fa; border: 1px solid #e2e2e7; padding: 16px; border-radius: 4px; font-family: 'Source Code Pro', 'Courier New', Courier, monospace; }
         .footer { background-color: #f4f4f7; color: #888888; text-align: center; font-size: 12px; padding: 16px; }
     </style>
 </head>
@@ -1306,5 +1174,3 @@ export async function deleteAllNotifications() {
         return { error: "Database error" };
     }
 }
-
-    

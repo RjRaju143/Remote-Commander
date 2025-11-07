@@ -58,3 +58,35 @@ const generateCommandFlow = ai.defineFlow(
     return output!;
   }
 );
+
+
+// Action State
+export interface GenerateCommandState {
+  result?: GenerateCommandOutput;
+  error?: string;
+  input?: string;
+}
+
+const RequestSchema = z.string().min(1, { message: "Request is required." });
+
+export async function handleGenerateCommand(
+  prevState: GenerateCommandState,
+  formData: FormData
+): Promise<GenerateCommandState> {
+  const request = formData.get("request");
+  const validatedRequest = RequestSchema.safeParse(request);
+
+  if (!validatedRequest.success) {
+    return { error: "Please enter a valid request." };
+  }
+
+  const input = validatedRequest.data;
+
+  try {
+    const result = await generateCommand({ request: input });
+    return { result, input };
+  } catch (error) {
+    console.error("Generation failed:", error);
+    return { error: "AI generation failed. Please try again.", input };
+  }
+}

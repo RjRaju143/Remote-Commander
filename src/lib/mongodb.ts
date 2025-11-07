@@ -2,7 +2,6 @@
 import { MongoClient } from 'mongodb';
 
 const uri = process.env.MONGODB_URI;
-const options = {};
 
 if (!uri) {
   throw new Error('Please add your Mongo URI to .env');
@@ -18,13 +17,13 @@ if (process.env.NODE_ENV === 'development') {
     _mongoClientPromise?: Promise<MongoClient>
   }
   if (!globalWithMongo._mongoClientPromise) {
-    client = new MongoClient(uri, options);
+    client = new MongoClient(uri);
     globalWithMongo._mongoClientPromise = client.connect();
   }
   clientPromise = globalWithMongo._mongoClientPromise;
 } else {
   // In production mode, it's best to not use a global variable.
-  client = new MongoClient(uri, options);
+  client = new MongoClient(uri);
   clientPromise = client.connect();
 }
 

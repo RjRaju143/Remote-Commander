@@ -33,70 +33,16 @@ import { useRouter } from "next/navigation";
 import { ShareDialog } from "./share-dialog";
 import type { User as CurrentUser } from "@/models/User";
 import { Progress } from "@/components/ui/progress";
-import { getServerHealth, type GetServerHealthOutput } from "@/ai/flows/get-server-health";
 import { cn } from "@/lib/utils";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 
 
 type ServerWithHealth = Server & { 
-    health?: GetServerHealthOutput;
     isCheckingHealth?: boolean;
 };
 
 const SERVERS_PER_PAGE = 6;
 
-function HealthStatus({ health, isChecking, onRefresh }: { health?: GetServerHealthOutput, isChecking?: boolean, onRefresh: () => void }) {
-    if (!health && !isChecking) {
-        return (
-            <Button variant="outline" size="sm" onClick={onRefresh}>
-                <RefreshCcw className="mr-2" /> Check Health
-            </Button>
-        );
-    }
-    
-    return (
-        <div className="space-y-3">
-             <div className="flex justify-between items-center mb-2">
-                 <h4 className="text-sm font-medium">Server Health</h4>
-                 <Button variant="ghost" size="icon" onClick={onRefresh} disabled={isChecking}>
-                    <RefreshCcw className={isChecking ? "animate-spin" : ""} />
-                 </Button>
-            </div>
-            {isChecking && !health ? (
-                <div className="space-y-4">
-                    <div className="flex items-center gap-2">
-                        <Loader2 className="animate-spin" />
-                        <span className="text-sm text-muted-foreground">Fetching metrics...</span>
-                    </div>
-                    <Progress value={0} className="h-2"/>
-                    <Progress value={0} className="h-2"/>
-                    <Progress value={0} className="h-2"/>
-                </div>
-            ) : health && (
-                 <div className="space-y-3 text-sm">
-                    <div className="flex items-center gap-2">
-                        <Cpu className="text-primary"/>
-                        <span className="w-16">CPU</span>
-                        <Progress value={health.cpuUsage} className="h-2"/>
-                        <span className="w-10 text-right font-mono">{health.cpuUsage.toFixed(0)}%</span>
-                    </div>
-                     <div className="flex items-center gap-2">
-                        <MemoryStick className="text-primary"/>
-                        <span className="w-16">Memory</span>
-                        <Progress value={health.memoryUsage} className="h-2"/>
-                        <span className="w-10 text-right font-mono">{health.memoryUsage.toFixed(0)}%</span>
-                    </div>
-                     <div className="flex items-center gap-2">
-                        <Database className="text-primary"/>
-                        <span className="w-16">Disk</span>
-                        <Progress value={health.diskUsage} className="h-2"/>
-                        <span className="w-10 text-right font-mono">{health.diskUsage.toFixed(0)}%</span>
-                    </div>
-                </div>
-            )}
-        </div>
-    );
-}
 
 export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: boolean }) {
   const [servers, setServers] = useState<ServerWithHealth[]>([]);
@@ -136,21 +82,6 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
     setCurrentPage(1);
   }, [showOnlyFavorites]);
 
-
-  const handleCheckHealth = async (serverId: string) => {
-    setServers(prev => prev.map(s => s.id === serverId ? { ...s, isCheckingHealth: true } : s));
-    try {
-        const health = await getServerHealth({ serverId });
-        setServers(prev => prev.map(s => s.id === serverId ? { ...s, health, isCheckingHealth: false } : s));
-    } catch (error: any) {
-        toast({
-            variant: "destructive",
-            title: "Health Check Failed",
-            description: error.message || "Could not retrieve server health.",
-        });
-        setServers(prev => prev.map(s => s.id === serverId ? { ...s, isCheckingHealth: false } : s));
-    }
-  };
 
   const handleToggleFavorite = (serverId: string) => {
       const isCurrentlyFavorite = currentUser?.favorites?.includes(serverId);
@@ -298,11 +229,12 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
                   <span>Shared by: {server.owner.email}</span>
                 </div>
               )}
-              <HealthStatus 
-                health={server.health}
-                isChecking={server.isCheckingHealth}
-                onRefresh={() => handleCheckHealth(server.id!)}
-              />
+               <div className="space-y-3 text-sm text-muted-foreground">
+                    <div className="flex items-center gap-2">
+                        <Cpu className="text-primary"/>
+                        {/* <span >CPU, Memory, and Disk usage can be checked on the connection page.</span> */}
+                    </div>
+                </div>
             </CardContent>
             <CardFooter>
                <Button className="w-full" onClick={() => handleConnect(server.id!)} disabled={server.status === 'connecting'}>
