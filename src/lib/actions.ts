@@ -9,16 +9,15 @@ import jwt from "jsonwebtoken";
 import clientPromise from "./mongodb";
 import { revalidatePath } from "next/cache";
 import { ServerSchema } from "@/models/Server";
-import CryptoJS from "crypto-js";
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { jwtVerify } from "jose";
 import type { User } from "@/models/User";
 import { ObjectId } from "mongodb";
 import type { Server } from "./types";
 import { Client } from 'ssh2';
 import nodemailer from 'nodemailer';
 import { NotificationModel, NotificationSchema, NotificationType } from "@/models/Notification";
+import { decrypt, encrypt, verifyJwt, getServerById as getServerByIdHelper } from "./server-helpers";
 
 
 export interface GenerateCommandState {
@@ -68,7 +67,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
   throw new Error("JWT_SECRET environment variable is not set.");
 }
-const secret = new TextEncoder().encode(JWT_SECRET);
+
 
 export async function handleLogin(
   prevState: AuthState | undefined,
@@ -365,53 +364,9 @@ export async function getFavoriteServers({ page = 1, limit = 6 }: { page?: numbe
 export async function getServerById(serverId: string): Promise<Server | null> {
   const user = await getCurrentUser();
   if (!user) return null;
-
-  if (!ObjectId.isValid(serverId)) return null;
-  const serverObjectId = new ObjectId(serverId);
-  const userObjectId = new ObjectId(user._id);
-
-  try {
-    const client = await clientPromise;
-    const db = client.db();
-
-    // Find the server and check if the current user is either the owner or in the guestIds array
-    const server = await db.collection('servers').findOne({ 
-        _id: serverObjectId,
-        $or: [
-          { ownerId: userObjectId },
-          { guestIds: userObjectId }
-        ]
-    });
-    if (!server) return null;
-
-    const serverDoc = server as any;
-    const serverData = JSON.parse(JSON.stringify(serverDoc));
-    return { ...serverData, id: serverData._id.toString() };
-
-  } catch (error) {
-    console.error("Failed to fetch server:", error);
-    return null;
-  }
+  return getServerByIdHelper(serverId, user._id);
 }
 
-
-// Encryption/Decryption functions
-export function encrypt(text: string): string {
-  const secret = process.env.ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error('ENCRYPTION_SECRET is not set in the environment variables.');
-  }
-  return CryptoJS.AES.encrypt(text, secret).toString();
-}
-
-export function decrypt(ciphertext: string): string {
-  const secret = process.env.ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error('ENCRYPTION_SECRET is not set in the environment variables.');
-  }
-  const bytes = CryptoJS.AES.decrypt(ciphertext, secret);
-  return bytes.toString(CryptoJS.enc.Utf8);
-}
 
 
 export async function addServer(serverData: unknown) {
@@ -459,14 +414,6 @@ export async function addServer(serverData: unknown) {
 }
 
 
-export async function verifyJwt(token: string) {
-  try {
-    const { payload } = await jwtVerify(token, secret);
-    return payload;
-  } catch (error) {
-    return null;
-  }
-}
 
 export async function getCurrentUser(): Promise<User | null> {
   const cookieStore = await cookies()
@@ -590,7 +537,7 @@ export async function deleteServer(serverId: string) {
 
 
 export async function testServerConnection(serverId: string): Promise<{ success: boolean; error?: string }> {
-  const creds = await getServerById(serverId);
+  const creds = await getServerByIdHelper(serverId, null);
   if (!creds) {
     return { success: false, error: 'Server not found or you do not have permission.' };
   }

@@ -1,4 +1,5 @@
 
+
 require('dotenv').config();
 
 const { createServer } = require('http');
@@ -12,9 +13,9 @@ const dev = process.env.NODE_ENV !== 'production';
 const app = next({ dev });
 const handle = app.getRequestHandler();
 
-// Dynamically require the actions module based on environment
-const actionsPath = dev ? './src/lib/actions' : './dist/lib/actions';
-const { verifyJwt, getServerById, decrypt } = require(actionsPath);
+// Dynamically require the helpers module based on environment
+const helpersPath = dev ? './src/lib/server-helpers' : './dist/lib/server-helpers';
+const { verifyJwt, getServerById, decrypt } = require(helpersPath);
 
 
 app.prepare().then(() => {
@@ -39,7 +40,7 @@ app.prepare().then(() => {
       }
       
       verifyJwt(sessionToken).then(decoded => {
-        if (!decoded) {
+        if (!decoded || !decoded.userId) {
             socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
             socket.destroy();
             return;
@@ -51,6 +52,9 @@ app.prepare().then(() => {
         wss.handleUpgrade(request, socket, head, (ws) => {
           wss.emit('connection', ws, request);
         });
+      }).catch(() => {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
       });
     });
   });
@@ -58,6 +62,7 @@ app.prepare().then(() => {
   wss.on('connection', (ws, req) => {
     let sshClient = null;
     let sshStream = null;
+    const userId = req.user.userId;
 
     const onCloseCleanup = () => {
         if (sshStream) {
@@ -80,7 +85,7 @@ app.prepare().then(() => {
                     return;
                 }
 
-                const serverCreds = await getServerById(msg.serverId);
+                const serverCreds = await getServerById(msg.serverId, userId);
 
                 if (!serverCreds) {
                     ws.send(JSON.stringify({ type: 'error', message: 'Server not found or permission denied' }));
