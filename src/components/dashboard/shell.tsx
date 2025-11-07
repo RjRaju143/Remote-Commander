@@ -6,14 +6,15 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
+import { useWebSocket } from 'next-ws/client';
 
 export function Shell({ serverId, username }: { serverId: string; username: string }) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const term = useRef<Terminal | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+  const ws = useWebSocket();
 
   useEffect(() => {
-    if (!terminalRef.current) return;
+    if (!terminalRef.current || !ws.current) return;
 
     const xterm = new Terminal({
       cursorBlink: true,
@@ -40,21 +41,14 @@ export function Shell({ serverId, username }: { serverId: string; username: stri
     xterm.open(terminalRef.current);
     fitAddon.fit();
 
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/api/ws`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
+    ws.current.send(JSON.stringify({
+        type: 'connect',
+        serverId: serverId,
+        cols: xterm.cols,
+        rows: xterm.rows,
+    }));
 
-    ws.onopen = () => {
-        ws.send(JSON.stringify({
-            type: 'connect',
-            serverId: serverId,
-            cols: xterm.cols,
-            rows: xterm.rows,
-        }));
-    };
-
-    ws.onmessage = (event) => {
+    ws.current.onmessage = (event) => {
         try {
             const msg = JSON.parse(event.data);
             if (msg.type === 'output') {
@@ -72,26 +66,26 @@ export function Shell({ serverId, username }: { serverId: string; username: stri
         }
     };
     
-    ws.onclose = () => {
+    ws.current.onclose = () => {
         xterm.write('\r\n\x1b[1;33m*** WebSocket Disconnected ***\x1b[0m\r\n');
     };
     
-    ws.onerror = (err) => {
+    ws.current.onerror = (err) => {
         console.error('WebSocket Error:', err);
         xterm.write('\r\n\x1b[1;31m*** A WebSocket error occurred ***\x1b[0m\r\n');
     };
 
 
     xterm.onData(data => {
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'input', data: btoa(data) }));
+        if (ws.current?.readyState === WebSocket.OPEN) {
+            ws.current.send(JSON.stringify({ type: 'input', data: btoa(data) }));
         }
     });
 
     const handleResize = () => {
       fitAddon.fit();
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
+      if (ws.current?.readyState === WebSocket.OPEN) {
+        ws.current.send(JSON.stringify({
           type: 'resize',
           cols: xterm.cols,
           rows: xterm.rows,
@@ -107,10 +101,9 @@ export function Shell({ serverId, username }: { serverId: string; username: stri
     return () => {
         window.removeEventListener('resize', handleResize);
         resizeObserver.disconnect();
-        ws.close();
         xterm.dispose();
     };
-  }, [serverId]);
+  }, [serverId, ws]);
 
   return <div ref={terminalRef} className="h-full w-full" />;
 }
