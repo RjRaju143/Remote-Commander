@@ -1,8 +1,5 @@
-
-
 'use server';
 
-import { generateCommand } from "@/ai/flows/generate-command";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -18,7 +15,7 @@ import { Client } from 'ssh2';
 import nodemailer from 'nodemailer';
 import { NotificationModel, NotificationSchema, NotificationType } from "@/models/Notification";
 import { decrypt, encrypt, verifyJwt, getServerById as getServerByIdHelper } from "./server-helpers";
-
+import { generateCommand } from "@/ai/flows/generate-command";
 
 export interface GenerateCommandState {
   result?: {
@@ -1197,5 +1194,3 @@ export async function deleteAllNotifications() {
         return { error: "Database error" };
     }
 }
-
-    
