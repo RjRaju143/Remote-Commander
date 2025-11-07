@@ -1,22 +1,7 @@
 
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { jwtVerify } from 'jose';
-
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error("JWT_SECRET environment variable is not set.");
-}
-const secret = new TextEncoder().encode(JWT_SECRET);
-
-async function verifyJwt(token: string) {
-  try {
-    const { payload } = await jwtVerify(token, secret);
-    return payload;
-  } catch (error) {
-    return null;
-  }
-}
+import { verifyJwt } from './lib/actions';
  
 export async function middleware(request: NextRequest) {
   const sessionToken = request.cookies.get('session')?.value;
@@ -62,7 +47,8 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
+     * - ws (websocket route)
      */
-    '/((?!api|_next/static|_next/image|favicon.ico).*)',
+    '/((?!api|_next/static|_next/image|favicon.ico|ws).*)',
   ],
 }

@@ -6,7 +6,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 
 const ClientShell = dynamic(() => import('@/components/dashboard/shell').then(mod => mod.Shell), {
     ssr: false,
-    loading: () => <Skeleton className="h-full w-full" />,
+    loading: () => <Skeleton className="h-full w-full bg-[#18181b]" />,
 });
 
 interface ShellClientWrapperProps {

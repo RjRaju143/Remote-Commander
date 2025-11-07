@@ -18,13 +18,20 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  webpack: (config, { isServer }) => {
-    if (isServer) {
-      config.externals = config.externals || [];
-      config.externals.push({
-        ssh2: 'commonjs ssh2',
-      });
+  webpack: (config, { isServer, nextRuntime }) => {
+    // Avoid bundling ssh2 and ws on the client
+    if (!isServer) {
+        config.externals.push('ssh2', 'ws');
     }
+    
+    // For server-side, if it's not the edge runtime, we can treat ssh2 as commonjs
+    if (isServer && nextRuntime === 'nodejs') {
+        config.externals.push({
+            ssh2: 'commonjs ssh2',
+            ws: 'commonjs ws'
+        });
+    }
+    
     return config;
   }
 };
