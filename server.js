@@ -1,14 +1,19 @@
+
 const { createServer } = require('http');
 const { parse } = require('url');
 const next = require('next');
 const { WebSocketServer } = require('ws');
 const { Client } = require('ssh2');
-const { verifyJwt, getServerById, decrypt } = require('./dist/lib/actions');
 const cookieParser = require('cookie-parser');
 
 const dev = process.env.NODE_ENV !== 'production';
 const app = next({ dev });
 const handle = app.getRequestHandler();
+
+// Dynamically require the actions module based on environment
+const actionsPath = dev ? './src/lib/actions' : './dist/lib/actions';
+const { verifyJwt, getServerById, decrypt } = require(actionsPath);
+
 
 app.prepare().then(() => {
   const server = createServer((req, res) => {
