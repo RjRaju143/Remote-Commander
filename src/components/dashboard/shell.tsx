@@ -1,27 +1,98 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 
-function getWebSocketUrl() {
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const host = window.location.host;
-    return `${protocol}://${host}/api/ws`;
+const POLLING_INTERVAL = 300; // ms
+
+// Helper to make API calls
+async function fetchApi(path: string, options: RequestInit = {}) {
+    const res = await fetch(path, {
+        ...options,
+        headers: {
+            'Content-Type': 'application/json',
+            ...options.headers,
+        },
+    });
+    if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ message: 'An unknown error occurred' }));
+        throw new Error(errorData.message || 'API request failed');
+    }
+    return res.json();
 }
 
-export function Shell({ serverId, username }: { serverId: string; username: string }) {
+export function Shell({ serverId }: { serverId: string; username: string }) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const term = useRef<Terminal | null>(null);
-  const ws = useRef<WebSocket | null>(null);
+  const sessionId = useRef<string | null>(null);
+  const pollTimeoutId = useRef<NodeJS.Timeout | null>(null);
+  const isUnmounted = useRef(false);
+
+  // Polling function to get output from the server
+  const pollForOutput = async () => {
+    if (!sessionId.current || isUnmounted.current) return;
+
+    try {
+      const { output } = await fetchApi(`/api/shell/${sessionId.current}`);
+      if (output && term.current) {
+        term.current.write(atob(output));
+      }
+    } catch (error) {
+      console.error('Polling error:', error);
+      if (term.current) {
+        term.current.write(`\r\n\x1b[1;31m*** Polling failed: ${(error as Error).message} ***\x1b[0m\r\n`);
+      }
+      // Stop polling on error
+      return;
+    }
+
+    if (!isUnmounted.current) {
+      pollTimeoutId.current = setTimeout(pollForOutput, POLLING_INTERVAL);
+    }
+  };
+
+  const connect = async (cols: number, rows: number) => {
+    if (!term.current) return;
+    try {
+        term.current.write('Attempting to connect to server...');
+        const data = await fetchApi('/api/shell/connect', {
+            method: 'POST',
+            body: JSON.stringify({ serverId, cols, rows }),
+        });
+
+        if (data.sessionId) {
+            sessionId.current = data.sessionId;
+            term.current.write('\r\n\x1b[1;32m*** SSH Shell Ready ***\x1b[0m\r\n');
+            // Start polling for output
+            pollForOutput();
+        } else {
+            throw new Error(data.message || 'Failed to get session ID.');
+        }
+    } catch (error) {
+        console.error('Connection error:', error);
+        term.current.write(`\r\n\x1b[1;31m*** Connection failed: ${(error as Error).message} ***\x1b[0m\r\n`);
+    }
+  }
+
+  const disconnect = () => {
+    if (sessionId.current) {
+      // Don't wait for the response, just fire and forget
+      fetchApi('/api/shell/disconnect', {
+          method: 'POST',
+          body: JSON.stringify({ sessionId: sessionId.current }),
+      }).catch(err => console.error("Error during disconnect:", err));
+      sessionId.current = null;
+    }
+  };
 
   useEffect(() => {
     if (!terminalRef.current) return;
+    isUnmounted.current = false;
 
-    // Create a new Terminal instance
     const xterm = new Terminal({
       cursorBlink: true,
       convertEol: true,
@@ -34,7 +105,6 @@ export function Shell({ serverId, username }: { serverId: string; username: stri
     });
     term.current = xterm;
     
-    // Load addons
     const fitAddon = new FitAddon();
     xterm.loadAddon(fitAddon);
     xterm.loadAddon(new WebLinksAddon());
@@ -45,86 +115,45 @@ export function Shell({ serverId, username }: { serverId: string; username: stri
         console.warn("WebGL addon failed to load, falling back to canvas renderer.");
     }
     
-    // Open the terminal in the ref
     xterm.open(terminalRef.current);
     fitAddon.fit();
+    
+    connect(xterm.cols, xterm.rows);
 
-    // Create WebSocket connection
-    const socket = new WebSocket(getWebSocketUrl());
-    ws.current = socket;
-
-    socket.onopen = () => {
-        // Send connection message
-        socket.send(JSON.stringify({
-            type: 'connect',
-            serverId: serverId,
-            cols: xterm.cols,
-            rows: xterm.rows,
-        }));
-    };
-
-    socket.onmessage = (event) => {
-        try {
-            const msg = JSON.parse(event.data);
-            if (msg.type === 'output') {
-                const data = atob(msg.data);
-                xterm.write(data);
-            } else if (msg.type === 'ready') {
-                xterm.write('\r\n\x1b[1;32m*** SSH Shell Ready ***\x1b[0m\r\n');
-            } else if (msg.type === 'end') {
-                xterm.write('\r\n\x1b[1;31m*** Connection Closed ***\x1b[0m\r\n');
-            } else if (msg.type === 'error') {
-                xterm.write(`\r\n\x1b[1;31m*** ERROR: ${msg.message} ***\x1b[0m\r\n`);
+    xterm.onData(async (data) => {
+        if (sessionId.current) {
+            try {
+                await fetchApi(`/api/shell/${sessionId.current}`, {
+                    method: 'POST',
+                    body: JSON.stringify({ input: btoa(data) }),
+                });
+            } catch (error) {
+                console.error('Input error:', error);
+                xterm.write(`\r\n\x1b[1;31m*** Failed to send input: ${(error as Error).message} ***\x1b[0m\r\n`);
             }
-        } catch (e) {
-            console.error("Invalid WS message", e);
-        }
-    };
-    
-    socket.onclose = () => {
-        xterm.write('\r\n\x1b[1;33m*** WebSocket Disconnected ***\x1b[0m\r\n');
-    };
-    
-    socket.onerror = (err) => {
-        console.error('WebSocket Error:', err);
-        xterm.write('\r\n\x1b[1;31m*** A WebSocket error occurred ***\x1b[0m\r\n');
-    };
-
-    // Handle terminal input
-    xterm.onData(data => {
-        if (socket.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify({ type: 'input', data: btoa(data) }));
         }
     });
 
-    // Handle resize
     const handleResize = () => {
       fitAddon.fit();
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({
-          type: 'resize',
-          cols: xterm.cols,
-          rows: xterm.rows,
-        }));
-      }
     };
-
     const resizeObserver = new ResizeObserver(handleResize);
     if (terminalRef.current) {
-        resizeObserver.observe(terminalRef.current);
+      resizeObserver.observe(terminalRef.current);
     }
-    window.addEventListener('resize', handleResize);
 
-    // Cleanup on unmount
     return () => {
-        window.removeEventListener('resize', handleResize);
-        if (terminalRef.current) {
-            resizeObserver.unobserve(terminalRef.current);
-        }
-        socket.close();
-        xterm.dispose();
+      isUnmounted.current = true;
+      if (pollTimeoutId.current) {
+        clearTimeout(pollTimeoutId.current);
+      }
+      disconnect();
+      if (terminalRef.current) {
+        resizeObserver.unobserve(terminalRef.current);
+      }
+      xterm.dispose();
     };
-  }, [serverId, username]);
+  }, [serverId]);
 
   return <div ref={terminalRef} className="h-full w-full" />;
 }
