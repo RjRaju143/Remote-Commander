@@ -20,6 +20,11 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  webpack: (config, { isServer }) => {
+    // This is to fix a build error with the 'ssh2' package.
+    config.externals.push('cpu-features');
+    return config;
+  },
 };
 
 export default nextConfig;
