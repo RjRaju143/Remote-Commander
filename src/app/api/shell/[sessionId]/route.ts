@@ -5,8 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/shell-sessions';
 
 // GET request handler for polling output
-export async function GET(request: NextRequest, { params }: { params: { sessionId: string } }) {
-    const { sessionId } = params;
+export async function GET(request: NextRequest, { params: { sessionId } }: { params: { sessionId: string } }) {
     const session = getSession(sessionId);
 
     if (!session) {
@@ -21,8 +20,7 @@ export async function GET(request: NextRequest, { params }: { params: { sessionI
 }
 
 // POST request handler for sending input
-export async function POST(request: NextRequest, { params }: { params: { sessionId: string } }) {
-    const { sessionId } = params;
+export async function POST(request: NextRequest, { params: { sessionId } }: { params: { sessionId: string } }) {
     const session = getSession(sessionId);
 
     if (!session) {
