@@ -1,7 +1,7 @@
 // src/lib/mongodb.ts
 import { MongoClient } from 'mongodb';
 
-const uri = 'mongodb+srv://admin:Qwerty@cluster0.olbkooh.mongodb.net/sshapp-prod';
+const uri = process.env.MONGODB_URI;
 
 if (!uri) {
   throw new Error('Please add your Mongo URI to .env');
