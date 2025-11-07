@@ -1,21 +1,27 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
-import { useWebSocket } from 'next-ws/client';
+
+function getWebSocketUrl() {
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const host = window.location.host;
+    return `${protocol}://${host}/api/ws`;
+}
 
 export function Shell({ serverId, username }: { serverId: string; username: string }) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const term = useRef<Terminal | null>(null);
-  const ws = useWebSocket();
+  const ws = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    if (!terminalRef.current || !ws.current) return;
+    if (!terminalRef.current) return;
 
+    // Create a new Terminal instance
     const xterm = new Terminal({
       cursorBlink: true,
       convertEol: true,
@@ -28,6 +34,7 @@ export function Shell({ serverId, username }: { serverId: string; username: stri
     });
     term.current = xterm;
     
+    // Load addons
     const fitAddon = new FitAddon();
     xterm.loadAddon(fitAddon);
     xterm.loadAddon(new WebLinksAddon());
@@ -38,17 +45,25 @@ export function Shell({ serverId, username }: { serverId: string; username: stri
         console.warn("WebGL addon failed to load, falling back to canvas renderer.");
     }
     
+    // Open the terminal in the ref
     xterm.open(terminalRef.current);
     fitAddon.fit();
 
-    ws.current.send(JSON.stringify({
-        type: 'connect',
-        serverId: serverId,
-        cols: xterm.cols,
-        rows: xterm.rows,
-    }));
+    // Create WebSocket connection
+    const socket = new WebSocket(getWebSocketUrl());
+    ws.current = socket;
 
-    ws.current.onmessage = (event) => {
+    socket.onopen = () => {
+        // Send connection message
+        socket.send(JSON.stringify({
+            type: 'connect',
+            serverId: serverId,
+            cols: xterm.cols,
+            rows: xterm.rows,
+        }));
+    };
+
+    socket.onmessage = (event) => {
         try {
             const msg = JSON.parse(event.data);
             if (msg.type === 'output') {
@@ -66,26 +81,27 @@ export function Shell({ serverId, username }: { serverId: string; username: stri
         }
     };
     
-    ws.current.onclose = () => {
+    socket.onclose = () => {
         xterm.write('\r\n\x1b[1;33m*** WebSocket Disconnected ***\x1b[0m\r\n');
     };
     
-    ws.current.onerror = (err) => {
+    socket.onerror = (err) => {
         console.error('WebSocket Error:', err);
         xterm.write('\r\n\x1b[1;31m*** A WebSocket error occurred ***\x1b[0m\r\n');
     };
 
-
+    // Handle terminal input
     xterm.onData(data => {
-        if (ws.current?.readyState === WebSocket.OPEN) {
-            ws.current.send(JSON.stringify({ type: 'input', data: btoa(data) }));
+        if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'input', data: btoa(data) }));
         }
     });
 
+    // Handle resize
     const handleResize = () => {
       fitAddon.fit();
-      if (ws.current?.readyState === WebSocket.OPEN) {
-        ws.current.send(JSON.stringify({
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({
           type: 'resize',
           cols: xterm.cols,
           rows: xterm.rows,
@@ -94,16 +110,21 @@ export function Shell({ serverId, username }: { serverId: string; username: stri
     };
 
     const resizeObserver = new ResizeObserver(handleResize);
-    resizeObserver.observe(terminalRef.current);
-    
+    if (terminalRef.current) {
+        resizeObserver.observe(terminalRef.current);
+    }
     window.addEventListener('resize', handleResize);
 
+    // Cleanup on unmount
     return () => {
         window.removeEventListener('resize', handleResize);
-        resizeObserver.disconnect();
+        if (terminalRef.current) {
+            resizeObserver.unobserve(terminalRef.current);
+        }
+        socket.close();
         xterm.dispose();
     };
-  }, [serverId, ws]);
+  }, [serverId, username]);
 
   return <div ref={terminalRef} className="h-full w-full" />;
 }
