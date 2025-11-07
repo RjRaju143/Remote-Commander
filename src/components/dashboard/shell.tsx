@@ -41,7 +41,7 @@ export function Shell({ serverId, username }: { serverId: string; username: stri
     fitAddon.fit();
 
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
+    const wsUrl = `${wsProtocol}//${window.location.host}/api/ws`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 

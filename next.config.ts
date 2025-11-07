@@ -1,5 +1,7 @@
 import type {NextConfig} from 'next';
-
+import {
+  NextResponse
+} from "next/server";
 const nextConfig: NextConfig = {
   /* config options here */
   typescript: {
@@ -19,20 +21,21 @@ const nextConfig: NextConfig = {
     ],
   },
   webpack: (config, { isServer, nextRuntime }) => {
-    // Avoid bundling ssh2 and ws on the client
-    if (!isServer) {
-        config.externals.push('ssh2', 'ws');
-    }
-    
-    // For server-side, if it's not the edge runtime, we can treat ssh2 as commonjs
-    if (isServer && nextRuntime === 'nodejs') {
+    if (isServer) {
         config.externals.push({
-            ssh2: 'commonjs ssh2',
-            ws: 'commonjs ws'
+            'ws': 'ws',
+            'ssh2': 'commonjs ssh2',
         });
     }
-    
     return config;
+  },
+  async rewrites() {
+    return [
+        {
+            source: '/api/ws',
+            destination: '/api/ws'
+        }
+    ]
   }
 };
 
