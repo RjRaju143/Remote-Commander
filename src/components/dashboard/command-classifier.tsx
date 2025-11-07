@@ -2,7 +2,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { handleGenerateCommand, type GenerateCommandState } from "@/lib/actions";
+import { handleGenerateCommand, type GenerateCommandState } from "@/ai/flows/generate-command";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";

@@ -14,40 +14,14 @@ import type { Server } from "./types";
 import { Client } from 'ssh2';
 import nodemailer from 'nodemailer';
 import { NotificationModel, NotificationSchema, NotificationType } from "@/models/Notification";
-import { decrypt, encrypt, verifyJwt, getServerById as getServerByIdHelper } from "./server-helpers";
-import { generateCommand } from "@/ai/flows/generate-command";
+import { decrypt, encrypt, getServerById as getServerByIdHelper } from "./server-helpers";
+import { generateCommand, GenerateCommandOutput } from "@/ai/flows/generate-command";
+import { verifyJwt } from "./jwt";
 
 export interface GenerateCommandState {
-  result?: {
-    command: string;
-    description: string;
-  };
+  result?: GenerateCommandOutput;
   error?: string;
   input?: string;
-}
-
-const RequestSchema = z.string().min(1, { message: "Request is required." });
-
-export async function handleGenerateCommand(
-  prevState: GenerateCommandState,
-  formData: FormData
-): Promise<GenerateCommandState> {
-  const request = formData.get("request");
-  const validatedRequest = RequestSchema.safeParse(request);
-
-  if (!validatedRequest.success) {
-    return { error: "Please enter a valid request." };
-  }
-
-  const input = validatedRequest.data;
-
-  try {
-    const result = await generateCommand({ request: input });
-    return { result, input };
-  } catch (error) {
-    console.error("Generation failed:", error);
-    return { error: "AI generation failed. Please try again.", input };
-  }
 }
 
 export interface AuthState {

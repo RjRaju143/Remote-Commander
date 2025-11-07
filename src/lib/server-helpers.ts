@@ -1,24 +1,10 @@
 
 import clientPromise from "./mongodb";
 import { ObjectId } from "mongodb";
-import { jwtVerify } from "jose";
 import CryptoJS from "crypto-js";
 import type { Server } from "./types";
+import { verifyJwt } from "./jwt";
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error("JWT_SECRET environment variable is not set.");
-}
-const secret = new TextEncoder().encode(JWT_SECRET);
-
-export async function verifyJwt(token: string) {
-  try {
-    const { payload } = await jwtVerify(token, secret);
-    return payload;
-  } catch (error) {
-    return null;
-  }
-}
 
 export async function getServerById(serverId: string, userId: string | null): Promise<Server | null> {
   if (!userId) return null;

@@ -1,7 +1,7 @@
 
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { verifyJwt } from './lib/actions';
+import { verifyJwt } from './lib/jwt';
  
 export async function middleware(request: NextRequest) {
   const sessionToken = request.cookies.get('session')?.value;
