@@ -15,11 +15,10 @@ import { Client } from 'ssh2';
 import nodemailer from 'nodemailer';
 import { NotificationModel, NotificationSchema, NotificationType } from "@/models/Notification";
 import { decrypt, encrypt, getServerById as getServerByIdHelper } from "./server-helpers";
-import { generateCommand, GenerateCommandOutput } from "@/ai/flows/generate-command";
 import { verifyJwt } from "./jwt";
 
 export interface GenerateCommandState {
-  result?: GenerateCommandOutput;
+  result?: any;
   error?: string;
   input?: string;
 }
@@ -508,7 +507,11 @@ export async function deleteServer(serverId: string) {
 
 
 export async function testServerConnection(serverId: string): Promise<{ success: boolean; error?: string }> {
-  const creds = await getServerByIdHelper(serverId, null);
+  const user = await getCurrentUser();
+  if (!user) {
+      return { success: false, error: 'Authentication failed. Please log in again.' };
+  }
+  const creds = await getServerByIdHelper(serverId, user._id);
   if (!creds) {
     return { success: false, error: 'Server not found or you do not have permission.' };
   }
