@@ -1,7 +1,7 @@
 
 import type { Client } from 'ssh2';
 
-// This map needs to be managed carefully. In a real-world scenario with multiple server instances,
+// This needs to be managed carefully. In a real-world scenario with multiple server instances,
 // you'd use a more persistent store like Redis. For a single-instance deployment, 
 // this shared in-memory map is sufficient.
 // We are centralizing it here so all API routes access the same instance.
@@ -11,7 +11,14 @@ interface SshSession {
     buffer: string;
 }
 
-const sessions = new Map<string, SshSession>();
+// In development mode, use a global variable to preserve the value across HMR.
+// In production, this will just be a module-scoped variable.
+let globalWithSshSessions = global as typeof globalThis & {
+    _sshSessions?: Map<string, SshSession>
+}
+
+const sessions = globalWithSshSessions._sshSessions || (globalWithSshSessions._sshSessions = new Map<string, SshSession>());
+
 
 export function getSession(sessionId: string): SshSession | undefined {
     return sessions.get(sessionId);
