@@ -6,9 +6,7 @@ import { verifyJwt } from '@/lib/jwt';
 import { getServerById, decrypt } from '@/lib/server-helpers';
 import { Client } from 'ssh2';
 import { randomUUID } from 'crypto';
-
-// In-memory store for active SSH sessions
-const sessions = new Map<string, { client: Client, stream: Client.Channel, buffer: string }>();
+import { addSession, deleteSession } from '@/lib/shell-sessions';
 
 export async function POST(request: NextRequest) {
   const sessionToken = request.cookies.get('session')?.value;
@@ -44,15 +42,14 @@ export async function POST(request: NextRequest) {
         }
 
         const sessionData = { client, stream, buffer: '' };
-        sessions.set(sessionId, sessionData);
+        addSession(sessionId, sessionData);
 
         stream.on('data', (data: Buffer) => {
           sessionData.buffer += data.toString('binary');
         });
 
         stream.on('close', () => {
-          sessions.delete(sessionId);
-          client.end();
+          deleteSession(sessionId);
         });
         
         resolve();
@@ -60,7 +57,7 @@ export async function POST(request: NextRequest) {
     }).on('error', (err) => {
       reject(err);
     }).on('end', () => {
-      sessions.delete(sessionId);
+      deleteSession(sessionId);
     });
 
     try {
@@ -86,6 +83,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ sessionId });
   } catch (error: any) {
     console.error(`SSH connection error for session ${sessionId}:`, error);
+    deleteSession(sessionId);
     return NextResponse.json({ message: `SSH Connection Error: ${error.message}` }, { status: 500 });
   }
 }

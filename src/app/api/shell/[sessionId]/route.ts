@@ -2,16 +2,12 @@
 'use server';
 
 import { NextRequest, NextResponse } from 'next/server';
-
-// This map needs to be managed carefully. In a real-world scenario,
-// you'd use a more persistent store like Redis if you had multiple server instances.
-// For a single-instance deployment, this in-memory map is sufficient.
-const sessions = new Map<string, { client: any, stream: any, buffer: string }>();
+import { getSession } from '@/lib/shell-sessions';
 
 // GET request handler for polling output
 export async function GET(request: NextRequest, { params }: { params: { sessionId: string } }) {
     const sessionId = params.sessionId;
-    const session = sessions.get(sessionId);
+    const session = getSession(sessionId);
 
     if (!session) {
         return NextResponse.json({ message: 'Session not found or expired' }, { status: 404 });
@@ -27,7 +23,7 @@ export async function GET(request: NextRequest, { params }: { params: { sessionI
 // POST request handler for sending input
 export async function POST(request: NextRequest, { params }: { params: { sessionId: string } }) {
     const sessionId = params.sessionId;
-    const session = sessions.get(sessionId);
+    const session = getSession(sessionId);
 
     if (!session) {
         return NextResponse.json({ message: 'Session not found or expired' }, { status: 404 });
