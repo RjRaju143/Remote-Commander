@@ -4,15 +4,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/shell-sessions';
 
-type RouteContext = {
-    params: {
-        sessionId: string;
-    }
-}
-
 // GET request handler for polling output
-export async function GET(request: NextRequest, context: RouteContext) {
-    const sessionId = context.params.sessionId;
+export async function GET(request: NextRequest, { params }: { params: { sessionId: string } }) {
+    const sessionId = params.sessionId;
     const session = getSession(sessionId);
 
     if (!session) {
@@ -27,8 +21,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
 }
 
 // POST request handler for sending input
-export async function POST(request: NextRequest, context: RouteContext) {
-    const sessionId = context.params.sessionId;
+export async function POST(request: NextRequest, { params }: { params: { sessionId: string } }) {
+    const sessionId = params.sessionId;
     const session = getSession(sessionId);
 
     if (!session) {
