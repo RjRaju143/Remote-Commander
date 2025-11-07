@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "tsx watch node_modules/next-ws/dist/cli.js dev",
+    "dev": "next-ws dev",
     "build": "next build",
-    "start": "next start",
+    "start": "next-ws start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },
