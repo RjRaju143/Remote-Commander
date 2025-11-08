@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useEffect, useTransition } from "react";
+import { useState, useEffect, useTransition, useCallback } from "react";
 import { getServerMetrics } from "@/lib/actions";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,10 @@ export function ServerMetrics({ serverId }: ServerMetricsProps) {
   const [isPending, startTransition] = useTransition();
   const { toast } = useToast();
 
-  const fetchMetrics = () => {
+  const fetchMetrics = useCallback(() => {
+    // Prevent multiple fetches at the same time
+    if (isPending) return;
+
     setIsLoading(true);
     startTransition(async () => {
       const result = await getServerMetrics(serverId);
@@ -41,11 +44,19 @@ export function ServerMetrics({ serverId }: ServerMetricsProps) {
       }
       setIsLoading(false);
     });
-  };
+  }, [serverId, toast, isPending]);
 
   useEffect(() => {
+    // Fetch metrics immediately on mount
     fetchMetrics();
-  }, [serverId]);
+
+    // Then set up an interval to fetch metrics every 60 seconds
+    const intervalId = setInterval(fetchMetrics, 60000); // 60 * 1000 ms
+
+    // Clean up the interval when the component unmounts
+    return () => clearInterval(intervalId);
+  }, [serverId, fetchMetrics]);
+
 
   const renderMetric = (Icon: React.ElementType, label: string, value: number | undefined) => (
     <div className="space-y-2">
