@@ -61,8 +61,8 @@ Stores Linux server credentials.
 | ----------------------------------- | ------------------------ |
 | ✅ Auth required for SSH or terminal | Prevent anonymous access |
 | ✅ SSH credentials encrypted         | Secure key handling      |
-| ✅ Commands stored/logged        | history saved in log table         |
-| ✅ WebSocket bound to auth/session   | Session-based SSH        |
+| ❌ Commands stored/logged        | history saved in log table         |
+| ❌ WebSocket bound to auth/session   | Session-based SSH        |
 | ✅ SSH session ends on logout        | Auto-cleanup             |
 
 ---
@@ -89,7 +89,7 @@ Stores Linux server credentials.
 
 | Feature               | Add Later? |
 | --------------------- | ---------- |
-| Servers health status | ❌         |
+| Servers health status | ✅         |
 | Command whitelist     | ❌         |
 | File browser (SFTP)   | ❌         |
 | Role-based access     | ❌         |
