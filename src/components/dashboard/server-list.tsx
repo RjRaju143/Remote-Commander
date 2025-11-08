@@ -222,20 +222,6 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
                 </DropdownMenu>
               </div>
             </CardHeader>
-            <CardContent className="flex-grow space-y-4">
-               {!isOwner && server.owner && (
-                <div className="flex items-center text-sm text-muted-foreground mb-4">
-                  <Share2 className="mr-2 h-4 w-4" />
-                  <span>Shared by: {server.owner.email}</span>
-                </div>
-              )}
-               <div className="space-y-3 text-sm text-muted-foreground">
-                    <div className="flex items-center gap-2">
-                        <Cpu className="text-primary"/>
-                        {/* <span >CPU, Memory, and Disk usage can be checked on the connection page.</span> */}
-                    </div>
-                </div>
-            </CardContent>
             <CardFooter>
                <Button className="w-full" onClick={() => handleConnect(server.id!)} disabled={server.status === 'connecting'}>
                   {server.status === 'connecting' ? <Loader2 className="animate-spin" /> : <Terminal />}
