@@ -365,5 +365,3 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
     </section>
   );
 }
-
-    
