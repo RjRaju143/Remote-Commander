@@ -14,6 +14,7 @@ import type { Server } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CommandClassifier } from '@/components/dashboard/command-classifier';
 import { Separator } from '@/components/ui/separator';
+import { ServerMetrics } from '@/components/dashboard/server-metrics';
 
 type ConnectionStatus = 'connecting' | 'connected' | 'error';
 
@@ -81,12 +82,15 @@ export default function ServerShellPage() {
             case 'connected':
                  if (!server) return null;
                  return (
-                    <div className="flex-1 min-h-0 flex flex-col gap-4">
-                        <div className="flex-grow min-h-[400px]">
+                    <div className="flex-1 min-h-0 grid md:grid-cols-3 gap-4">
+                        <div className="md:col-span-2 min-h-[400px] flex flex-col">
                            <ShellClientWrapper serverId={serverId} username={server.username} />
                         </div>
-                        <Separator />
-                        <CommandClassifier />
+                        <div className="space-y-4">
+                            <ServerMetrics serverId={serverId} />
+                            <Separator />
+                            <CommandClassifier />
+                        </div>
                     </div>
                  );
         }

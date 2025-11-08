@@ -16,6 +16,7 @@ import nodemailer from 'nodemailer';
 import { NotificationModel, NotificationSchema, NotificationType } from "@/models/Notification";
 import { decrypt, encrypt, getServerById as getServerByIdHelper } from "./server-helpers";
 import { verifyJwt } from "./jwt";
+import { getServerMetricsCommand } from "@/ai/flows/get-server-metrics";
 
 export interface GenerateCommandState {
   result?: any;
@@ -1172,5 +1173,56 @@ export async function deleteAllNotifications() {
     } catch (error) {
         console.error("Failed to delete all notifications:", error);
         return { error: "Database error" };
+    }
+}
+
+
+export async function getServerMetrics(serverId: string) {
+    const user = await getCurrentUser();
+    if (!user) {
+        return { error: 'Authentication failed. Please log in again.' };
+    }
+    const creds = await getServerByIdHelper(serverId, user._id);
+    if (!creds) {
+        return { error: 'Server not found or you do not have permission.' };
+    }
+
+    try {
+        const { command } = await getServerMetricsCommand();
+
+        return new Promise((resolve) => {
+            const conn = new Client();
+            let output = '';
+
+            conn.on('ready', () => {
+                conn.exec(command, (err, stream) => {
+                    if (err) {
+                        conn.end();
+                        return resolve({ error: `Execution error: ${err.message}` });
+                    }
+                    stream.on('data', (data: Buffer) => {
+                        output += data.toString();
+                    }).on('close', () => {
+                        conn.end();
+                        const [cpu, memory, disk] = output.trim().split(' ').map(parseFloat);
+                        if (!isNaN(cpu) && !isNaN(memory) && !isNaN(disk)) {
+                            resolve({ success: true, metrics: { cpu, memory, disk } });
+                        } else {
+                            resolve({ error: 'Failed to parse metrics from server output.' });
+                        }
+                    });
+                });
+            }).on('error', (err: Error) => {
+                resolve({ error: `Connection error: ${err.message}` });
+            }).connect({
+                host: creds.ip,
+                port: Number(creds.port),
+                username: creds.username,
+                privateKey: decrypt(creds.privateKey || ''),
+                readyTimeout: 10000,
+            });
+        });
+    } catch (error: any) {
+        return { error: `Failed to get metrics command: ${error.message}` };
     }
 }
