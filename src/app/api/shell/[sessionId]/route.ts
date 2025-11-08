@@ -6,16 +6,18 @@ import { getSession } from '@/lib/shell-sessions';
 
 // GET request handler for polling output
 export async function GET(request: NextRequest, { params }: { params: { sessionId: string } }) {
-    const sessionId = params.sessionId;
+    const sessionId = params?.sessionId;
+    if (!sessionId) {
+        return NextResponse.json({ message: 'sessionId not found or expired' }, { status: 404 });
+    }
     const session = getSession(sessionId);
-
+    
     if (!session) {
         return NextResponse.json({ message: 'Session not found or expired' }, { status: 404 });
     }
 
-    const output = session.buffer;
-    session.buffer = ''; // Clear buffer after sending
-
+    const output = session.buffer ?  session.buffer : ''; // Clear buffer after sending
+    
     // Using btoa as a simple way to handle binary data in JSON
     return NextResponse.json({ output: btoa(output) });
 }
