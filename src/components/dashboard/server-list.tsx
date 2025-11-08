@@ -6,9 +6,9 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { Server } from "@/lib/types";
-import { HardDrive, MoreVertical, PlusCircle, Wifi, WifiOff, Edit, Trash2, Terminal, Loader2, Users, User, Share2, Cpu, MemoryStick, Database, RefreshCcw, Star } from "lucide-react";
+import { HardDrive, MoreVertical, PlusCircle, Wifi, WifiOff, Edit, Trash2, Terminal, Loader2, Users, User, Share2, Star } from "lucide-react";
 import { AddServerDialog } from "./add-server-dialog";
-import { useEffect, useState, useMemo, useCallback, useTransition } from "react";
+import { useEffect, useState, useCallback, useTransition } from "react";
 import { getServers, deleteServer, getCurrentUser, toggleFavoriteServer, getFavoriteServers } from "@/lib/actions";
 import {
   DropdownMenu,
@@ -32,7 +32,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ShareDialog } from "./share-dialog";
 import type { User as CurrentUser } from "@/models/User";
-import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 
@@ -146,6 +145,33 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
     router.push(`/dashboard/server/${serverId}`);
   };
 
+  const getStatusBadge = (status: Server['status']) => {
+    switch (status) {
+        case 'connecting':
+            return (
+                <Badge variant="secondary">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Connecting
+                </Badge>
+            );
+        case 'active':
+             return (
+                <Badge className="bg-accent text-accent-foreground hover:bg-accent/90">
+                    <Wifi className="mr-2 h-4 w-4" />
+                    Active
+                </Badge>
+            );
+        case 'inactive':
+        default:
+            return (
+                <Badge variant="outline">
+                    <WifiOff className="mr-2 h-4 w-4" />
+                    Inactive
+                </Badge>
+            );
+    }
+  };
+
   return (
     <section>
       {!showOnlyFavorites && (
@@ -229,11 +255,9 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
                   <span>Shared by: {server.owner.email}</span>
                 </div>
               )}
-               <div className="space-y-3 text-sm text-muted-foreground">
-                    <div className="flex items-center gap-2">
-                        <Cpu className="text-primary"/>
-                        {/* <span >CPU, Memory, and Disk usage can be checked on the connection page.</span> */}
-                    </div>
+                <div className="flex items-center text-sm gap-2">
+                    <span className="text-muted-foreground">Status:</span>
+                    {getStatusBadge(server.status)}
                 </div>
             </CardContent>
             <CardFooter>
