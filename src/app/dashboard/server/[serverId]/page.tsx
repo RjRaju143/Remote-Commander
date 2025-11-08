@@ -6,15 +6,17 @@ import { getServerById, testServerConnection } from '@/lib/actions';
 import { notFound, useRouter, useParams } from 'next/navigation';
 import { ShellClientWrapper } from '@/components/dashboard/shell-client-wrapper';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Loader2, ServerCrash, Wifi } from 'lucide-react';
+import { ArrowLeft, Loader2, ServerCrash, Wifi, Maximize, Minimize } from 'lucide-react';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import type { Server } from '@/lib/types';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CommandClassifier } from '@/components/dashboard/command-classifier';
 import { Separator } from '@/components/ui/separator';
 import { ServerMetrics } from '@/components/dashboard/server-metrics';
+import { cn } from '@/lib/utils';
+
 
 type ConnectionStatus = 'connecting' | 'connected' | 'error';
 
@@ -24,6 +26,8 @@ export default function ServerShellPage() {
     const [server, setServer] = useState<Server | null>(null);
     const [status, setStatus] = useState<ConnectionStatus>('connecting');
     const [error, setError] = useState<string | null>(null);
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const shellContainerRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
 
     useEffect(() => {
@@ -32,7 +36,6 @@ export default function ServerShellPage() {
         const fetchServerAndTestConnection = async () => {
             const serverData = await getServerById(serverId);
             if (!serverData) {
-                // This will trigger the notFound UI
                 notFound();
                 return;
             }
@@ -49,6 +52,27 @@ export default function ServerShellPage() {
 
         fetchServerAndTestConnection();
     }, [serverId]);
+
+    const handleFullscreenToggle = () => {
+        const elem = shellContainerRef.current;
+        if (!elem) return;
+
+        if (!document.fullscreenElement) {
+            elem.requestFullscreen().catch(err => {
+                alert(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+            });
+        } else {
+            document.exitFullscreen();
+        }
+    };
+
+    useEffect(() => {
+        const onFullscreenChange = () => {
+            setIsFullscreen(!!document.fullscreenElement);
+        };
+        document.addEventListener('fullscreenchange', onFullscreenChange);
+        return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+    }, []);
 
     const renderContent = () => {
         switch (status) {
@@ -82,11 +106,20 @@ export default function ServerShellPage() {
             case 'connected':
                  if (!server) return null;
                  return (
-                    <div className="flex-1 min-h-0 grid md:grid-cols-3 gap-4">
-                        <div className="md:col-span-2 min-h-[400px] flex flex-col">
+                    <div className={cn("flex-1 min-h-0 grid md:grid-cols-3 gap-4", isFullscreen && "grid-cols-1 grid-rows-1")}>
+                        <div ref={shellContainerRef} className={cn("md:col-span-2 min-h-[400px] flex flex-col relative bg-card rounded-lg overflow-hidden", isFullscreen && "col-span-1")}>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="absolute top-2 right-2 z-10 text-white/50 hover:text-white hover:bg-white/10"
+                                onClick={handleFullscreenToggle}
+                                title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+                            >
+                                {isFullscreen ? <Minimize /> : <Maximize />}
+                            </Button>
                            <ShellClientWrapper serverId={serverId} username={server.username} />
                         </div>
-                        <div className="space-y-4">
+                        <div className={cn("space-y-4", isFullscreen && "hidden")}>
                             <ServerMetrics serverId={serverId} />
                             <Separator />
                             <CommandClassifier />
@@ -100,7 +133,7 @@ export default function ServerShellPage() {
     return (
         <div className="flex flex-col h-[calc(100vh-8rem)] gap-4">
            {server && (
-             <header className="flex items-center justify-between">
+             <header className={cn("flex items-center justify-between", isFullscreen && "hidden")}>
                 <div>
                     <div className="flex items-center gap-3">
                         <h1 className="text-3xl font-bold font-headline tracking-tight">{server.name}</h1>
