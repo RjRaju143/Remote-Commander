@@ -417,7 +417,7 @@ export async function getCurrentUser(): Promise<User | null> {
 }
 
 export async function updateServer(serverId: string, serverData: unknown) {
-  const user = await getCurrentUser();
+  const user : any = await getCurrentUser();
   if (!user) {
     return { error: "You must be logged in." };
   }
@@ -517,7 +517,7 @@ export async function testServerConnection(serverId: string): Promise<{ success:
         return { success: false, error: 'Server not found or you do not have permission.' };
     }
 
-    let privateKey;
+    let privateKey: any;
     if (creds.privateKey) {
         try {
             privateKey = decrypt(creds.privateKey);
