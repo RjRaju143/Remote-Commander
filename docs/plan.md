@@ -55,30 +55,30 @@ Stores Linux server credentials.
 
 ---
 
+## ✅ Supported Features
+
+* ✅ Interactive commands (`nano`, `htop`, etc.)
+* ✅ Streamed output with `xterm.js`
+* ✅ MongoDB-stored server credentials (one per user)
+* ✅ SSH via IPV6 and password (optional)
+
+---
+
 ## 🛡 Security Rules
 
 | Rule                                | Purpose                  |
 | ----------------------------------- | ------------------------ |
 | ✅ Auth required for SSH or terminal | Prevent anonymous access |
 | ✅ SSH credentials encrypted         | Secure key handling      |
-| ❌ Commands stored/logged        | history saved in log table         |
-| ❌ WebSocket bound to auth/session   | Session-based SSH        |
+| ❌ server logs                       | history saved in log table   |
 | ✅ SSH session ends on logout        | Auto-cleanup             |
 
 ---
 
-## ✅ Supported Features
-
-* ✅ Interactive commands (`nano`, `htop`, etc.)
-* ✅ Streamed output with `xterm.js`
-* ✅ MongoDB-stored server credentials (one per user)
-* ❌ SSH via IPV6 and password (optional)
-
----
 
 ## ✅ Included (By Design)
 
-* ❌ command logging in log table
+* ❌ server logging in log table
 * ❌ audit trails or history
 * ❌ user roles or teams (user management)
 * ❌ (SFTP) file upload/download
@@ -90,7 +90,6 @@ Stores Linux server credentials.
 | Feature               | Add Later? |
 | --------------------- | ---------- |
 | Servers health status | ✅         |
-| Command whitelist     | ❌         |
 | File browser (SFTP)   | ❌         |
 | Role-based access     | ❌         |
 
