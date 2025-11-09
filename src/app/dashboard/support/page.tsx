@@ -19,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { handleSupportRequest } from "@/lib/actions";
 import { useToast } from "@/hooks/use-toast";
 
@@ -50,6 +50,7 @@ const faqs = [
 function SupportForm() {
   const { toast, notify } = useToast();
   const [state, formAction, pending] = useActionState(handleSupportRequest, undefined);
+  const [formKey, setFormKey] = useState(Date.now());
 
   useEffect(() => {
     if (state?.error) {
@@ -67,8 +68,8 @@ function SupportForm() {
       if (state.notification) {
           notify();
       }
-      const form = document.getElementById('supportForm') as HTMLFormElement;
-      form?.reset();
+      // Reset the form by changing the key, which forces a re-mount
+      setFormKey(Date.now());
     }
   }, [state, toast, notify]);
 
@@ -80,7 +81,7 @@ function SupportForm() {
             Have a question or issue? Fill out the form below.
         </CardDescription>
         </CardHeader>
-        <form action={formAction} id="supportForm">
+        <form action={formAction} key={formKey}>
             <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
