@@ -164,7 +164,7 @@ export default function SupportPage() {
                 <div>
                     <h3 className="font-semibold">Phone Support</h3>
                     <p className="text-sm text-muted-foreground">
-                        +91 7702481430.
+                        +91 1234567890.
                     </p>
                 </div>
              </div>
