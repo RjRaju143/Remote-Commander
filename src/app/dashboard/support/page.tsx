@@ -19,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useState, useRef } from "react";
 import { handleSupportRequest } from "@/lib/actions";
 import { useToast } from "@/hooks/use-toast";
 
@@ -47,20 +47,21 @@ const faqs = [
 ];
 
 
-function SupportForm() {
+function SupportForm({ onFormSubmit, formKey }: { onFormSubmit: () => void, formKey: number }) {
   const { toast, notify } = useToast();
   const [state, formAction, pending] = useActionState(handleSupportRequest, undefined);
-  const [formKey, setFormKey] = useState(Date.now());
+  const prevStateRef = useRef(state);
+
 
   useEffect(() => {
-    if (state?.error) {
+    if (state?.error && state !== prevStateRef.current) {
       toast({
         variant: "destructive",
         title: "Error",
         description: state.error,
       });
     }
-    if (state?.success) {
+    if (state?.success && state !== prevStateRef.current) {
       toast({
         title: "Message Sent!",
         description: "Thank you for contacting us. We'll get back to you shortly.",
@@ -68,10 +69,10 @@ function SupportForm() {
       if (state.notification) {
           notify();
       }
-      // Reset the form by changing the key, which forces a re-mount
-      setFormKey(Date.now());
+      onFormSubmit();
     }
-  }, [state, toast, notify]);
+    prevStateRef.current = state;
+  }, [state, toast, notify, onFormSubmit]);
 
   return (
     <Card>
@@ -99,7 +100,7 @@ function SupportForm() {
                 </div>
                  {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
                 <Button type="submit" disabled={pending}>
-                    {pending ? <Loader2 className="animate-spin" /> : <Send />}
+                    {pending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
                     Send Message
                 </Button>
             </CardContent>
@@ -109,6 +110,12 @@ function SupportForm() {
 }
 
 export default function SupportPage() {
+  const [formKey, setFormKey] = useState(Date.now());
+
+  const handleResetForm = () => {
+    setFormKey(Date.now());
+  }
+
   return (
     <div className="space-y-8">
       <div>
@@ -119,7 +126,7 @@ export default function SupportPage() {
       </div>
 
       <div className="grid gap-8 md:grid-cols-2">
-        <SupportForm />
+        <SupportForm onFormSubmit={handleResetForm} formKey={formKey} />
         <Card>
           <CardHeader>
             <CardTitle>Frequently Asked Questions</CardTitle>
