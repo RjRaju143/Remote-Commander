@@ -1,3 +1,4 @@
+
 'use server';
 
 import { z } from "zod";
@@ -917,8 +918,6 @@ export async function toggleFavoriteServer(serverId: string) {
 }
 
 const SupportRequestSchema = z.object({
-  name: z.string().min(1, 'Name is required.'),
-  email: z.string().email('Invalid email address.'),
   message: z.string().min(10, 'Message must be at least 10 characters.'),
 });
 
@@ -936,6 +935,9 @@ export async function handleSupportRequest(
     formData: FormData
 ): Promise<AuthState & { notification?: boolean }> {
     const user = await getCurrentUser();
+    if (!user || !user.firstName || !user.email) {
+      return { error: 'You must be logged in to send a support request.' };
+    }
 
     const validatedFields = SupportRequestSchema.safeParse(Object.fromEntries(formData.entries()));
 
@@ -943,7 +945,9 @@ export async function handleSupportRequest(
         return { error: validatedFields.error.errors[0]?.message || 'Invalid data.' };
     }
 
-    const { name, email, message } = validatedFields.data;
+    const { message } = validatedFields.data;
+    const name = `${user.firstName} ${user.lastName || ''}`.trim();
+    const email = user.email;
     
     const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
 

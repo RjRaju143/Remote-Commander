@@ -54,24 +54,27 @@ function SupportForm({ onFormSubmit, formKey }: { onFormSubmit: () => void, form
 
 
   useEffect(() => {
-    if (state?.error && state !== prevStateRef.current) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: state.error,
-      });
+    // Only trigger effects if the state has genuinely changed
+    if (state !== prevStateRef.current) {
+        if (state?.error) {
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: state.error,
+            });
+        }
+        if (state?.success) {
+            toast({
+                title: "Message Sent!",
+                description: "Thank you for contacting us. We'll get back to you shortly.",
+            });
+            if (state.notification) {
+                notify();
+            }
+            onFormSubmit(); // This will change the key and reset the form
+        }
+        prevStateRef.current = state;
     }
-    if (state?.success && state !== prevStateRef.current) {
-      toast({
-        title: "Message Sent!",
-        description: "Thank you for contacting us. We'll get back to you shortly.",
-      });
-      if (state.notification) {
-          notify();
-      }
-      onFormSubmit();
-    }
-    prevStateRef.current = state;
   }, [state, toast, notify, onFormSubmit]);
 
   return (
@@ -79,21 +82,11 @@ function SupportForm({ onFormSubmit, formKey }: { onFormSubmit: () => void, form
         <CardHeader>
         <CardTitle>Send us a Message</CardTitle>
         <CardDescription>
-            Have a question or issue? Fill out the form below.
+            Have a question or issue? Fill out the form below. Your details will be sent automatically.
         </CardDescription>
         </CardHeader>
         <form action={formAction} key={formKey}>
             <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                        <Label htmlFor="name">Name</Label>
-                        <Input id="name" name="name" required placeholder="Your Name" />
-                    </div>
-                    <div className="space-y-2">
-                        <Label htmlFor="email">Email</Label>
-                        <Input id="email" name="email" type="email" required placeholder="your.email@example.com" />
-                    </div>
-                </div>
                 <div className="space-y-2">
                     <Label htmlFor="message">Message</Label>
                     <Textarea id="message" name="message" required placeholder="Describe your issue or question..." />
