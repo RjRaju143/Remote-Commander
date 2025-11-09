@@ -3,7 +3,7 @@ import clientPromise from "./mongodb";
 import { ObjectId } from "mongodb";
 import CryptoJS from "crypto-js";
 import type { Server } from "./types";
-import { verifyJwt } from "./jwt";
+// import { verifyJwt } from "./jwt";
 
 
 export async function getServerById(serverId: string, userId: string | null): Promise<Server | null> {

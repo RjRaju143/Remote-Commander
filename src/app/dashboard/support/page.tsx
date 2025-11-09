@@ -19,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useState, useRef } from "react";
 import { handleSupportRequest } from "@/lib/actions";
 import { useToast } from "@/hooks/use-toast";
 
@@ -47,58 +47,53 @@ const faqs = [
 ];
 
 
-function SupportForm() {
+function SupportForm({ onFormSubmit, formKey }: { onFormSubmit: () => void, formKey: number }) {
   const { toast, notify } = useToast();
   const [state, formAction, pending] = useActionState(handleSupportRequest, undefined);
+  const prevStateRef = useRef(state);
+
 
   useEffect(() => {
-    if (state?.error) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: state.error,
-      });
+    // Only trigger effects if the state has genuinely changed
+    if (state !== prevStateRef.current) {
+        if (state?.error) {
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: state.error,
+            });
+        }
+        if (state?.success) {
+            toast({
+                title: "Message Sent!",
+                description: "Thank you for contacting us. We'll get back to you shortly.",
+            });
+            if (state.notification) {
+                notify();
+            }
+            onFormSubmit(); // This will change the key and reset the form
+        }
+        prevStateRef.current = state;
     }
-    if (state?.success) {
-      toast({
-        title: "Message Sent!",
-        description: "Thank you for contacting us. We'll get back to you shortly.",
-      });
-      if (state.notification) {
-          notify();
-      }
-      const form = document.getElementById('supportForm') as HTMLFormElement;
-      form?.reset();
-    }
-  }, [state, toast, notify]);
+  }, [state, toast, notify, onFormSubmit]);
 
   return (
     <Card>
         <CardHeader>
         <CardTitle>Send us a Message</CardTitle>
         <CardDescription>
-            Have a question or issue? Fill out the form below.
+            Have a question or issue? Fill out the form below. Your details will be sent automatically.
         </CardDescription>
         </CardHeader>
-        <form action={formAction} id="supportForm">
+        <form action={formAction} key={formKey}>
             <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                        <Label htmlFor="name">Name</Label>
-                        <Input id="name" name="name" required placeholder="Your Name" />
-                    </div>
-                    <div className="space-y-2">
-                        <Label htmlFor="email">Email</Label>
-                        <Input id="email" name="email" type="email" required placeholder="your.email@example.com" />
-                    </div>
-                </div>
                 <div className="space-y-2">
                     <Label htmlFor="message">Message</Label>
                     <Textarea id="message" name="message" required placeholder="Describe your issue or question..." />
                 </div>
                  {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
                 <Button type="submit" disabled={pending}>
-                    {pending ? <Loader2 className="animate-spin" /> : <Send />}
+                    {pending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
                     Send Message
                 </Button>
             </CardContent>
@@ -108,6 +103,12 @@ function SupportForm() {
 }
 
 export default function SupportPage() {
+  const [formKey, setFormKey] = useState(Date.now());
+
+  const handleResetForm = () => {
+    setFormKey(Date.now());
+  }
+
   return (
     <div className="space-y-8">
       <div>
@@ -118,7 +119,7 @@ export default function SupportPage() {
       </div>
 
       <div className="grid gap-8 md:grid-cols-2">
-        <SupportForm />
+        <SupportForm onFormSubmit={handleResetForm} formKey={formKey} />
         <Card>
           <CardHeader>
             <CardTitle>Frequently Asked Questions</CardTitle>
@@ -152,8 +153,8 @@ export default function SupportPage() {
                 <div>
                     <h3 className="font-semibold">Email Support</h3>
                     <p className="text-sm text-muted-foreground">
-                        <a href="mailto:bangarraju1152@gmail.com" className="hover:underline">
-                            bangarraju1152@gmail.com
+                        <a href="mailto:remotecommander@gmail.com" className="hover:underline">
+                            remotecommander@gmail.com
                         </a>
                     </p>
                 </div>
@@ -163,7 +164,7 @@ export default function SupportPage() {
                 <div>
                     <h3 className="font-semibold">Phone Support</h3>
                     <p className="text-sm text-muted-foreground">
-                        +91 7702481430.
+                        +91 1234567890.
                     </p>
                 </div>
              </div>
