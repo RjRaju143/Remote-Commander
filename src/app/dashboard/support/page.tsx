@@ -153,8 +153,8 @@ export default function SupportPage() {
                 <div>
                     <h3 className="font-semibold">Email Support</h3>
                     <p className="text-sm text-muted-foreground">
-                        <a href="mailto:bangarraju1152@gmail.com" className="hover:underline">
-                            bangarraju1152@gmail.com
+                        <a href="mailto:remotecommander@gmail.com" className="hover:underline">
+                            remotecommander@gmail.com
                         </a>
                     </p>
                 </div>
