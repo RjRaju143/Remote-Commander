@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useState, useActionState, useEffect } from "react";
+import { useState, useActionState, useEffect, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import type { Server } from "@/lib/types";
 import { shareServer } from "@/lib/actions";
@@ -30,6 +30,11 @@ export function ShareDialog({ server, open, onOpenChange }: ShareDialogProps) {
   const { toast, notify } = useToast();
   const [state, formAction, pending] = useActionState(shareServer, undefined);
 
+  const onOpenChangeRef = useRef(onOpenChange);
+  useEffect(() => {
+    onOpenChangeRef.current = onOpenChange;
+  });
+
    useEffect(() => {
     if (state?.error) {
         toast({
@@ -46,9 +51,9 @@ export function ShareDialog({ server, open, onOpenChange }: ShareDialogProps) {
         if (state.notification) {
             notify();
         }
-        onOpenChange(false);
+        onOpenChangeRef.current(false);
     }
-   }, [state, toast, notify, onOpenChange]);
+   }, [state, toast, notify]);
 
 
   return (

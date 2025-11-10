@@ -14,9 +14,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { useState, type ReactNode } from "react";
+import { useState, type ReactNode, useActionState, useEffect, useRef } from "react";
 import { addServer } from "@/lib/actions";
 import { useToast } from "@/hooks/use-toast";
+import { Loader2 } from "lucide-react";
 
 
 type AddServerDialogProps = {
@@ -27,73 +28,77 @@ type AddServerDialogProps = {
 
 export function AddServerDialog({ children, open, onOpenChange }: AddServerDialogProps) {
   const { toast, notify } = useToast();
-  const [name, setName] = useState('');
-  const [ip, setIp] = useState('');
-  const [port, setPort] = useState(22);
-  const [username, setUsername] = useState('');
-  const [privateKey, setPrivateKey] = useState('');
-  
-  const handleSubmit = async () => {
-    const result = await addServer({ name, ip, port, username, privateKey });
-    if (result.error) {
+  const [state, formAction, pending] = useActionState(addServer, undefined);
+
+  // Use a ref to hold the latest onOpenChange function without causing re-renders
+  const onOpenChangeRef = useRef(onOpenChange);
+  useEffect(() => {
+    onOpenChangeRef.current = onOpenChange;
+  });
+
+  useEffect(() => {
+    if (state?.error) {
       toast({
         variant: "destructive",
         title: "Error adding server",
-        description: result.error,
+        description: state.error,
       });
-    } else {
+    }
+    if (state?.success) {
       toast({
         title: "Server Added",
-        description: `${name} has been added successfully.`,
+        description: "A new server has been added successfully.",
       });
-      if (result.notification) {
+      if (state.notification) {
           notify();
       }
-       // Reset form and close dialog
-      setName('');
-      setIp('');
-      setPort(22);
-      setUsername('');
-      setPrivateKey('');
-      onOpenChange(false);
+      onOpenChangeRef.current(false);
+      // Manually reset form by targeting form with an ID
+      const form = document.getElementById('addServerForm') as HTMLFormElement;
+      form?.reset();
     }
-  };
+  }, [state, toast, notify]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>{children}</DialogTrigger>
       <DialogContent className="sm:max-w-[425px]">
-        <DialogHeader>
-          <DialogTitle className="font-headline">Add New Server</DialogTitle>
-          <DialogDescription>
-            Enter the credentials for the server you want to manage. The private key will be encrypted.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-4 py-4">
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label htmlFor="name" className="text-right">Name</Label>
-            <Input id="name" value={name} onChange={(e) => setName(e.target.value)} className="col-span-3" placeholder="My Awesome Server" />
-          </div>
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label htmlFor="ip" className="text-right">IP Address</Label>
-            <Input id="ip" value={ip} onChange={(e) => setIp(e.target.value)} className="col-span-3" placeholder="192.168.1.1" />
-          </div>
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label htmlFor="port" className="text-right">Port</Label>
-            <Input id="port" type="number" value={port} onChange={(e) => setPort(parseInt(e.target.value, 10))} className="col-span-3" />
-          </div>
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label htmlFor="username" className="text-right">Username</Label>
-            <Input id="username" value={username} onChange={(e) => setUsername(e.target.value)} className="col-span-3" placeholder="root" />
-          </div>
-          <div className="grid grid-cols-4 items-start gap-4">
-            <Label htmlFor="privateKey" className="text-right pt-2">Private Key</Label>
-            <Textarea id="privateKey" value={privateKey} onChange={(e) => setPrivateKey(e.target.value)} className="col-span-3 font-code" placeholder="-----BEGIN RSA PRIVATE KEY-----" />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button type="submit" onClick={handleSubmit}>Save Server</Button>
-        </DialogFooter>
+        <form action={formAction} id="addServerForm">
+            <DialogHeader>
+            <DialogTitle className="font-headline">Add New Server</DialogTitle>
+            <DialogDescription>
+                Enter the credentials for the server you want to manage. The private key will be encrypted.
+            </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="name" className="text-right">Name</Label>
+                <Input id="name" name="name" className="col-span-3" placeholder="My Awesome Server" required />
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="ip" className="text-right">IP Address</Label>
+                <Input id="ip" name="ip" className="col-span-3" placeholder="192.168.1.1" required />
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="port" className="text-right">Port</Label>
+                <Input id="port" name="port" type="number" defaultValue={22} className="col-span-3" required />
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="username" className="text-right">Username</Label>
+                <Input id="username" name="username" className="col-span-3" placeholder="root" required />
+            </div>
+            <div className="grid grid-cols-4 items-start gap-4">
+                <Label htmlFor="privateKey" className="text-right pt-2">Private Key</Label>
+                <Textarea id="privateKey" name="privateKey" className="col-span-3 font-code" placeholder="-----BEGIN RSA PRIVATE KEY-----" />
+            </div>
+            </div>
+            <DialogFooter>
+                <Button type="submit" disabled={pending}>
+                    {pending && <Loader2 className="animate-spin" />}
+                    Save Server
+                </Button>
+            </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

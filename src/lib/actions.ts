@@ -360,14 +360,18 @@ export async function getServerById(serverId: string): Promise<Server | null> {
 }
 
 
+const AddServerSchema = ServerSchema.omit({ ownerId: true, permissions: true });
 
-export async function addServer(serverData: unknown) {
+export async function addServer(
+  prevState: AuthState | undefined,
+  formData: FormData
+): Promise<AuthState> {
   const user = await getCurrentUser();
   if (!user) {
     return { error: "You must be logged in to add a server." };
   }
-
-  const validatedServer = ServerSchema.safeParse(serverData);
+  
+  const validatedServer = AddServerSchema.safeParse(Object.fromEntries(formData.entries()));
   if (!validatedServer.success) {
     const firstError = validatedServer.error.errors[0]?.message;
     return { error: firstError || "Invalid server data." };
@@ -438,12 +442,25 @@ export async function getCurrentUser(): Promise<User | null> {
     }
 }
 
-export async function updateServer(serverId: string, serverData: unknown) {
+const UpdateServerSchema = ServerSchema.partial().extend({
+    serverId: z.string().refine((id) => ObjectId.isValid(id)),
+});
+
+export async function updateServer(
+    prevState: AuthState | undefined,
+    formData: FormData
+): Promise<AuthState> {
   const user = await getCurrentUser();
   if (!user) return { error: "You must be logged in." };
   
-  if (!ObjectId.isValid(serverId)) return { error: "Invalid server ID." };
+  const validatedFields = UpdateServerSchema.safeParse(Object.fromEntries(formData.entries()));
+
+  if (!validatedFields.success) {
+    return { error: "Invalid server data." };
+  }
   
+  const { serverId, ...serverData } = validatedFields.data;
+
   const server = await getServerById(serverId);
   if (!server) return { error: "Server not found." };
   
@@ -451,16 +468,11 @@ export async function updateServer(serverId: string, serverData: unknown) {
     return { error: "You do not have permission to update this server." };
   }
 
-  const validatedServer = ServerSchema.partial().safeParse(serverData);
-  if (!validatedServer.success) {
-    return { error: "Invalid server data." };
-  }
-
   try {
     const client = await clientPromise;
     const db = client.db();
     
-    const { privateKey, ...serverDetails } = validatedServer.data;
+    const { privateKey, ...serverDetails } = serverData;
     
     const updateDoc: Record<string, any> = { ...serverDetails };
 
@@ -477,7 +489,7 @@ export async function updateServer(serverId: string, serverData: unknown) {
       return { error: "Server not found." };
     }
     
-    const serverName = validatedServer.data.name || 'the server';
+    const serverName = serverData.name || 'the server';
     await createNotification(user._id, `You updated the server: "${serverName}".`, 'server_added');
 
 
@@ -1261,6 +1273,118 @@ export async function getServerMetrics(serverId: string) {
         });
     } catch (error: any) {
         return { error: `Failed to get metrics command: ${error.message}` };
+    }
+}
+
+
+const SmtpSettingsSchema = z.object({
+  host: z.string().min(1, 'Host is required'),
+  port: z.coerce.number().min(1, 'Port is required'),
+  user: z.string().min(1, 'User is required'),
+  pass: z.string().min(1, 'Password is required'),
+  senderEmail: z.string().email('Invalid sender email'),
+});
+
+export async function saveSmtpSettings(
+    prevState: AuthState | undefined,
+    formData: FormData
+): Promise<AuthState> {
+    const user = await getCurrentUser();
+    if (!user || !isUserAdmin(user)) {
+        return { error: "You do not have permission to modify SMTP settings." };
+    }
+
+    const validatedFields = SmtpSettingsSchema.safeParse(Object.fromEntries(formData.entries()));
+    if (!validatedFields.success) {
+        return { error: validatedFields.error.errors[0].message };
+    }
+
+    const { pass, ...settings } = validatedFields.data;
+    const encryptedPass = encrypt(pass);
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        await db.collection('settings').updateOne(
+            { key: 'smtp' },
+            { $set: { key: 'smtp', ...settings, pass: encryptedPass } },
+            { upsert: true }
+        );
+        revalidatePath('/dashboard/settings');
+        return { success: true, message: "SMTP settings saved successfully." };
+    } catch (error) {
+        console.error("Failed to save SMTP settings:", error);
+        return { error: "Could not save settings to database." };
+    }
+}
+
+export async function getSmtpSettings() {
+    const user = await getCurrentUser();
+    if (!user || !isUserAdmin(user)) return null;
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        const settings = await db.collection('settings').findOne({ key: 'smtp' });
+        if (!settings) return null;
+        
+        const { pass, ...rest } = settings; // Don't send password to client
+        return JSON.parse(JSON.stringify(rest));
+    } catch (error) {
+        console.error("Failed to get SMTP settings:", error);
+        return null;
+    }
+}
+
+export async function deleteSmtpSettings() {
+    const user = await getCurrentUser();
+    if (!user || !isUserAdmin(user)) {
+        return { error: "You do not have permission to delete SMTP settings." };
+    }
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        await db.collection('settings').deleteOne({ key: 'smtp' });
+        revalidatePath('/dashboard/settings');
+        return { success: true };
+    } catch (error) {
+        console.error("Failed to delete SMTP settings:", error);
+        return { error: "Database error." };
+    }
+}
+
+export async function testSmtpConnection(
+    prevState: AuthState | undefined,
+    formData: FormData
+): Promise<AuthState> {
+    const user = await getCurrentUser();
+    if (!user || !isUserAdmin(user)) {
+        return { error: "Unauthorized" };
+    }
+
+    const validatedFields = SmtpSettingsSchema.safeParse(Object.fromEntries(formData.entries()));
+    if (!validatedFields.success) {
+        return { error: "Invalid data." };
+    }
+
+    const settings = validatedFields.data;
+
+    const transporter = nodemailer.createTransport({
+        host: settings.host,
+        port: settings.port,
+        secure: settings.port === 465,
+        auth: {
+            user: settings.user,
+            pass: settings.pass,
+        },
+    });
+
+    try {
+        await transporter.verify();
+        return { success: true, message: "Connection successful!" };
+    } catch (error: any) {
+        return { error: `Connection failed: ${error.message}` };
     }
 }
 
