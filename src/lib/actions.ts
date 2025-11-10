@@ -183,6 +183,7 @@ export async function getServers({ page = 1, limit = 6, noSort = false }: { page
     const userObjectId = new ObjectId(user._id);
     
     const userIsAdmin = isUserAdmin(user);
+    const skip = (page - 1) * limit;
 
     const matchStage = { 
         $match: userIsAdmin ? {} : { // Admins see all servers
@@ -1262,3 +1263,4 @@ export async function getServerMetrics(serverId: string) {
         return { error: `Failed to get metrics command: ${error.message}` };
     }
 }
+
