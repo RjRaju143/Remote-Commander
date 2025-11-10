@@ -1,4 +1,5 @@
 
+
 'use server';
 
 import { z } from "zod";
@@ -18,6 +19,7 @@ import { NotificationModel, NotificationSchema, NotificationType } from "@/model
 import { decrypt, encrypt, getServerById as getServerByIdHelper } from "./server-helpers";
 import { verifyJwt } from "./jwt";
 import { getServerMetricsCommand } from "@/ai/flows/get-server-metrics";
+import { canUser, isUserAdmin, Permission, PermissionLevel } from "./auth";
 
 export interface GenerateCommandState {
   result?: any;
@@ -28,6 +30,8 @@ export interface GenerateCommandState {
 export interface AuthState {
   error?: string;
   success?: boolean;
+  message?: string;
+  notification?: boolean;
 }
 
 const LoginSchema = z.object({
@@ -71,7 +75,7 @@ export async function handleLogin(
     }
 
     const token = jwt.sign(
-      { userId: user._id.toString(), email: user.email },
+      { userId: user._id.toString(), email: user.email, roles: user.roles || ['user'] },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -136,10 +140,11 @@ export async function handleRegister(
       firstName,
       lastName,
       favorites: [],
+      roles: ['user'], // Default role
     });
-
+    
     const token = jwt.sign(
-      { userId: result.insertedId.toString(), email },
+      { userId: result.insertedId.toString(), email, roles: ['user'] },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -176,14 +181,14 @@ export async function getServers({ page = 1, limit = 6, noSort = false }: { page
     const client = await clientPromise;
     const db = client.db();
     const userObjectId = new ObjectId(user._id);
-
-    const skip = (page - 1) * limit;
+    
+    const userIsAdmin = isUserAdmin(user);
 
     const matchStage = { 
-        $match: { 
+        $match: userIsAdmin ? {} : { // Admins see all servers
           $or: [
             { ownerId: userObjectId }, 
-            { guestIds: userObjectId }
+            { "permissions.userId": userObjectId }
           ] 
         } 
       };
@@ -225,7 +230,7 @@ export async function getServers({ page = 1, limit = 6, noSort = false }: { page
         username: 1,
         status: 1,
         ownerId: 1,
-        guestIds: 1,
+        permissions: 1,
         owner: {
           _id: '$ownerInfo._id',
           email: '$ownerInfo.email'
@@ -266,23 +271,25 @@ export async function getFavoriteServers({ page = 1, limit = 6 }: { page?: numbe
     const db = client.db();
     const userObjectId = new ObjectId(user._id);
     const favoriteIds = user.favorites.map(id => new ObjectId(id));
-
-    const skip = (page - 1) * limit;
+    
+    const userIsAdmin = isUserAdmin(user);
 
     const matchStage = {
       $match: {
         _id: { $in: favoriteIds },
-        $or: [
-          { ownerId: userObjectId },
-          { guestIds: userObjectId }
-        ]
+        ...(userIsAdmin ? {} : { // Admin can see any favorite, others must have permission
+             $or: [
+              { ownerId: userObjectId },
+              { "permissions.userId": userObjectId }
+            ]
+        })
       }
     };
     
     const serversPipeline = [
       matchStage,
       { $sort: { name: 1 } },
-      { $skip: skip },
+      { $skip: (page - 1) * limit },
       { $limit: limit },
       {
         $lookup: {
@@ -303,7 +310,7 @@ export async function getFavoriteServers({ page = 1, limit = 6 }: { page?: numbe
           username: 1,
           status: 1,
           ownerId: 1,
-          guestIds: 1,
+          permissions: 1,
           owner: {
             _id: '$ownerInfo._id',
             email: '$ownerInfo.email'
@@ -336,7 +343,19 @@ export async function getFavoriteServers({ page = 1, limit = 6 }: { page?: numbe
 export async function getServerById(serverId: string): Promise<Server | null> {
   const user = await getCurrentUser();
   if (!user) return null;
-  return getServerByIdHelper(serverId, user._id);
+  const server = await getServerByIdHelper(serverId, user._id);
+
+  if (!server) return null;
+
+  // Enrich with current user's permission
+  if (server.ownerId === user._id) {
+    server.userPermission = Permission.ADMIN;
+  } else {
+    const permissionEntry = server.permissions?.find(p => p.userId === user._id);
+    server.userPermission = permissionEntry ? permissionEntry.level : Permission.NONE;
+  }
+
+  return server;
 }
 
 
@@ -362,7 +381,7 @@ export async function addServer(serverData: unknown) {
     const serverToInsert: Record<string, any> = {
       ...serverDetails,
       ownerId: new ObjectId(user._id),
-      guestIds: [],
+      permissions: [],
       status: 'inactive'
     };
 
@@ -409,6 +428,7 @@ export async function getCurrentUser(): Promise<User | null> {
         plainUser._id = plainUser._id.toString();
         // Ensure favorites is an array even if it's missing
         plainUser.favorites = plainUser.favorites?.map((id: ObjectId | string) => id.toString()) || [];
+        plainUser.roles = plainUser.roles || ['user'];
 
         return plainUser;
     } catch (error) {
@@ -418,13 +438,16 @@ export async function getCurrentUser(): Promise<User | null> {
 }
 
 export async function updateServer(serverId: string, serverData: unknown) {
-  const user : any = await getCurrentUser();
-  if (!user) {
-    return { error: "You must be logged in." };
-  }
+  const user = await getCurrentUser();
+  if (!user) return { error: "You must be logged in." };
   
-  if (!ObjectId.isValid(serverId)) {
-    return { error: "Invalid server ID." };
+  if (!ObjectId.isValid(serverId)) return { error: "Invalid server ID." };
+  
+  const server = await getServerById(serverId);
+  if (!server) return { error: "Server not found." };
+  
+  if (!canUser(server, Permission.ADMIN, user)) {
+    return { error: "You do not have permission to update this server." };
   }
 
   const validatedServer = ServerSchema.partial().safeParse(serverData);
@@ -445,12 +468,12 @@ export async function updateServer(serverId: string, serverData: unknown) {
     }
 
     const result = await db.collection("servers").updateOne(
-      { _id: new ObjectId(serverId), ownerId: new ObjectId(user._id) },
+      { _id: new ObjectId(serverId) },
       { $set: updateDoc }
     );
     
     if (result.matchedCount === 0) {
-      return { error: "Server not found or you do not have permission to update it." };
+      return { error: "Server not found." };
     }
     
     const serverName = validatedServer.data.name || 'the server';
@@ -468,32 +491,26 @@ export async function updateServer(serverId: string, serverData: unknown) {
 
 export async function deleteServer(serverId: string) {
   const user = await getCurrentUser();
-  if (!user) {
-    return { error: "You must be logged in." };
-  }
+  if (!user) return { error: "You must be logged in." };
 
-  if (!ObjectId.isValid(serverId)) {
-    return { error: "Invalid server ID." };
-  }
+  if (!ObjectId.isValid(serverId)) return { error: "Invalid server ID." };
 
   try {
     const client = await clientPromise;
     const db = client.db();
     
-    // Find server first to get name for notification
-    const serverToDelete = await db.collection("servers").findOne({ 
-      _id: new ObjectId(serverId),
-      ownerId: new ObjectId(user._id),
-    });
-
+    const serverToDelete = await getServerById(serverId);
     if (!serverToDelete) {
-      return { error: "Server not found or you do not have permission to delete it." };
+      return { error: "Server not found." };
     }
     
-    const result = await db.collection("servers").deleteOne({ _id: serverToDelete._id });
+    if (!canUser(serverToDelete, Permission.ADMIN, user)) {
+      return { error: "You do not have permission to delete this server." };
+    }
+
+    const result = await db.collection("servers").deleteOne({ _id: new ObjectId(serverToDelete.id) });
 
     if (result.deletedCount === 0) {
-      // This case should be rare given the findOne check, but it's good practice
       return { error: "Failed to delete the server after finding it." };
     }
 
@@ -510,18 +527,19 @@ export async function deleteServer(serverId: string) {
 
 export async function testServerConnection(serverId: string): Promise<{ success: boolean; error?: string }> {
     const user = await getCurrentUser();
-    if (!user) {
-        return { success: false, error: 'Authentication failed. Please log in again.' };
-    }
-    const creds = await getServerByIdHelper(serverId, user._id);
-    if (!creds) {
-        return { success: false, error: 'Server not found or you do not have permission.' };
+    if (!user) return { success: false, error: 'Authentication failed. Please log in again.' };
+
+    const server = await getServerById(serverId);
+    if (!server) return { success: false, error: 'Server not found or you do not have permission.' };
+    
+    if (!canUser(server, Permission.EXECUTE, user)) {
+        return { success: false, error: 'You do not have permission to connect to this server.' };
     }
 
     let privateKey: any;
-    if (creds.privateKey) {
+    if (server.privateKey) {
         try {
-            privateKey = decrypt(creds.privateKey);
+            privateKey = decrypt(server.privateKey);
         } catch (e) {
             return { success: false, error: 'Failed to decrypt private key. It may be corrupted.' };
         }
@@ -545,9 +563,9 @@ export async function testServerConnection(serverId: string): Promise<{ success:
             }
             resolve({ success: false, error: errorMessage });
         }).connect({
-            host: creds.ip,
-            port: Number(creds.port),
-            username: creds.username,
+            host: server.ip,
+            port: Number(server.port),
+            username: server.username,
             privateKey: privateKey,
             readyTimeout: 10000,
         });
@@ -555,20 +573,34 @@ export async function testServerConnection(serverId: string): Promise<{ success:
 }
 
 // Sharing Actions
+const ShareServerSchema = z.object({
+    serverId: z.string().refine(id => ObjectId.isValid(id)),
+    email: z.string().email(),
+    permission: z.nativeEnum(Permission),
+});
 
-export async function shareServer(serverId: string, emailToShareWith: string) {
+export async function shareServer(
+  prevState: AuthState | undefined,
+  formData: FormData
+): Promise<AuthState> {
   const owner = await getCurrentUser();
-  if (!owner) {
-    return { error: "You must be logged in." };
+  if (!owner) return { error: "You must be logged in." };
+  
+  const validatedFields = ShareServerSchema.safeParse(Object.fromEntries(formData.entries()));
+
+  if (!validatedFields.success) {
+    return { error: "Invalid data provided." };
   }
 
-  if (!ObjectId.isValid(serverId)) {
-    return { error: "Invalid server ID." };
-  }
-   if (!z.string().email().safeParse(emailToShareWith).success) {
-    return { error: "Invalid email address provided." };
-  }
+  const { serverId, email: emailToShareWith, permission } = validatedFields.data;
 
+  const server = await getServerById(serverId);
+  if (!server) return { error: "Server not found." };
+  
+  if (!canUser(server, Permission.ADMIN, owner)) {
+    return { error: "You do not have permission to share this server." };
+  }
+  
   if (owner.email === emailToShareWith) {
     return { error: "You cannot share a server with yourself." };
   }
@@ -577,40 +609,40 @@ export async function shareServer(serverId: string, emailToShareWith: string) {
     const client = await clientPromise;
     const db = client.db();
 
-    const server = await db.collection('servers').findOne({
-      _id: new ObjectId(serverId),
-      ownerId: new ObjectId(owner._id),
-    });
-
-    if (!server) {
-      return { error: "Server not found or you do not have permission to share it." };
-    }
-
     const userToShareWith = await db.collection('users').findOne({ email: emailToShareWith });
     if (!userToShareWith) {
       return { error: `User with email "${emailToShareWith}" not found.` };
     }
     
-    const guestId = new ObjectId(userToShareWith._id);
+    const guestId = userToShareWith._id;
 
-    // Check if user is already a guest
-    const isAlreadyGuest = (server.guestIds || []).some((id: ObjectId) => id.equals(guestId));
-    if (isAlreadyGuest) {
-        return { error: `This server is already shared with ${emailToShareWith}.` };
+    // Check if user already has permissions, and if so, update them. Otherwise, add them.
+    const existingPermission = server.permissions?.find(p => p.userId.toString() === guestId.toString());
+
+    if (existingPermission) {
+        // Update existing permission
+        if (existingPermission.level === permission) {
+            return { error: `This user already has '${permission}' permission.` };
+        }
+        await db.collection('servers').updateOne(
+            { _id: new ObjectId(serverId), "permissions.userId": guestId },
+            { $set: { "permissions.$.level": permission } }
+        );
+    } else {
+        // Add new permission
+        await db.collection('servers').updateOne(
+            { _id: new ObjectId(serverId) },
+            { $addToSet: { permissions: { userId: guestId, level: permission } } }
+        );
     }
-
-    await db.collection('servers').updateOne(
-        { _id: new ObjectId(serverId) },
-        { $addToSet: { guestIds: guestId } } // Use $addToSet to avoid duplicates
-    );
     
-    // Create notifications for both owner and guest
-    await createNotification(owner._id, `You shared "${server.name}" with ${emailToShareWith}.`, 'server_shared');
-    await createNotification(userToShareWith._id.toString(), `${owner.email} shared the server "${server.name}" with you.`, 'server_shared', `/dashboard/server/${serverId}`);
+    await createNotification(owner._id, `You granted '${permission}' access for "${server.name}" to ${emailToShareWith}.`, 'server_shared');
+    await createNotification(userToShareWith._id.toString(), `${owner.email} granted you '${permission}' access to the server "${server.name}".`, 'server_shared', `/dashboard/server/${serverId}`);
 
     revalidatePath('/dashboard');
+    revalidatePath('/dashboard/guests');
 
-    return { success: true, notification: true };
+    return { success: true, message: `${emailToShareWith} now has '${permission}' access to ${server.name}.`, notification: true };
   } catch (error) {
     console.error("Failed to share server:", error);
     return { error: "An unexpected error occurred." };
@@ -620,30 +652,22 @@ export async function shareServer(serverId: string, emailToShareWith: string) {
 
 export async function getServerPrivateKey(serverId: string): Promise<{error?: string; privateKey?: string}> {
   const user = await getCurrentUser();
-  if (!user) {
-    return { error: "You must be logged in." };
-  }
-  if (!ObjectId.isValid(serverId)) {
-    return { error: "Invalid server ID." };
-  }
+  if (!user) return { error: "You must be logged in." };
   
+  if (!ObjectId.isValid(serverId)) return { error: "Invalid server ID." };
+
+  const server = await getServerById(serverId);
+  if (!server) return { error: "Server not found or you do not have permission to download the key." };
+
+  if (!canUser(server, Permission.ADMIN, user)) {
+    return { error: "You do not have permission to download this key." };
+  }
+
+  if (!server.privateKey) {
+    return { error: "No private key is associated with this server." };
+  }
+
   try {
-    const client = await clientPromise;
-    const db = client.db();
-
-    const server = await db.collection('servers').findOne({ 
-      _id: new ObjectId(serverId),
-      ownerId: new ObjectId(user._id)
-    });
-
-    if (!server) {
-      return { error: "Server not found or you do not have permission to download the key." };
-    }
-
-    if (!server.privateKey) {
-      return { error: "No private key is associated with this server." };
-    }
-
     const decryptedKey = decrypt(server.privateKey);
     return { privateKey: decryptedKey };
 
@@ -661,52 +685,35 @@ export type GuestAccessDetails = {
     servers: {
       serverId: string;
       serverName: string;
+      permission: PermissionLevel;
     }[];
 }[];
 
 export async function getGuestAccessDetails(): Promise<GuestAccessDetails> {
     const owner = await getCurrentUser();
-    if (!owner) {
-        return [];
-    }
+    if (!owner) return [];
     
     try {
         const client = await clientPromise;
         const db = client.db();
         const ownerId = new ObjectId(owner._id);
 
-        const servers = await db.collection('servers').find({ ownerId }).toArray();
+        const servers = await db.collection('servers').find({ ownerId, "permissions.0": { $exists: true } }).toArray();
+        if (servers.length === 0) return [];
 
-        if (servers.length === 0) {
-            return [];
-        }
+        const guestMap = new Map<string, { guestEmail: string; servers: { serverId: string; serverName: string, permission: PermissionLevel }[] }>();
 
-        const guestMap = new Map<string, { guestEmail: string; servers: { serverId: string; serverName: string }[] }>();
-
-        // Get all unique guest IDs from all servers
-        const allGuestIds = servers.reduce((acc, server) => {
-            if (server.guestIds) {
-                acc.push(...server.guestIds);
-            }
-            return acc;
-        }, [] as ObjectId[]);
-        
+        const allGuestIds = servers.flatMap(s => s.permissions?.map(p => p.userId) || []);
         const uniqueGuestIds = [...new Set(allGuestIds.map(id => id.toString()))].map(id => new ObjectId(id));
-        
-        if (uniqueGuestIds.length === 0) {
-            return [];
-        }
+        if (uniqueGuestIds.length === 0) return [];
 
-        // Fetch all guest user documents in one query
         const guests = await db.collection('users').find({ _id: { $in: uniqueGuestIds } }).toArray();
         const guestUserMap = new Map(guests.map(g => [g._id.toString(), g.email]));
 
-
-        // Populate the guestMap
         for (const server of servers) {
-            if (server.guestIds) {
-                for (const guestId of server.guestIds) {
-                    const guestIdStr = guestId.toString();
+            if (server.permissions) {
+                for (const perm of server.permissions) {
+                    const guestIdStr = perm.userId.toString();
                     const guestEmail = guestUserMap.get(guestIdStr);
 
                     if (guestEmail) {
@@ -716,6 +723,7 @@ export async function getGuestAccessDetails(): Promise<GuestAccessDetails> {
                         guestMap.get(guestIdStr)!.servers.push({
                             serverId: server._id.toString(),
                             serverName: server.name,
+                            permission: perm.level,
                         });
                     }
                 }
@@ -736,9 +744,7 @@ export async function getGuestAccessDetails(): Promise<GuestAccessDetails> {
 
 export async function revokeGuestAccess(serverId: string, guestId: string) {
     const owner = await getCurrentUser();
-    if (!owner) {
-        return { error: "You must be logged in." };
-    }
+    if (!owner) return { error: "You must be logged in." };
 
     if (!ObjectId.isValid(serverId) || !ObjectId.isValid(guestId)) {
         return { error: "Invalid ID provided." };
@@ -753,7 +759,7 @@ export async function revokeGuestAccess(serverId: string, guestId: string) {
 
         const result = await db.collection('servers').updateOne(
             { _id: serverObjectId, ownerId: ownerId },
-            { $pull: { guestIds: guestObjectId } as any }
+            { $pull: { permissions: { userId: guestObjectId } } as any }
         );
 
         if (result.matchedCount === 0) {
@@ -784,7 +790,7 @@ const ChangePasswordSchema = z.object({
 export async function handleChangePassword(
     prevState: AuthState | undefined,
     formData: FormData
-): Promise<AuthState & { notification?: boolean }> {
+): Promise<AuthState> {
     const user = await getCurrentUser();
     if (!user) {
         return { error: 'You must be logged in.' };
@@ -933,7 +939,7 @@ function escapeHtml(text: string) {
 export async function handleSupportRequest(
     prevState: AuthState | undefined,
     formData: FormData
-): Promise<AuthState & { notification?: boolean }> {
+): Promise<AuthState> {
     const user = await getCurrentUser();
     if (!user || !user.firstName || !user.email) {
       return { error: 'You must be logged in to send a support request.' };
@@ -949,28 +955,47 @@ export async function handleSupportRequest(
     const name = `${user.firstName} ${user.lastName || ''}`.trim();
     const email = user.email;
     
-    const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SENDER_EMAIL } = process.env;
+    // Fetch SMTP settings from DB first
+    const dbClient = await clientPromise;
+    const db = dbClient.db();
+    const smtpSettings = await db.collection('settings').findOne({ key: 'smtp' });
 
-    if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
-        console.error("SMTP environment variables are not set.");
-        return { error: "The application is not configured to send emails. Please contact support directly." };
+    let transporter;
+
+    if (smtpSettings) {
+        transporter = nodemailer.createTransport({
+            host: smtpSettings.host,
+            port: Number(smtpSettings.port),
+            secure: Number(smtpSettings.port) === 465,
+            auth: {
+                user: smtpSettings.user,
+                pass: decrypt(smtpSettings.pass),
+            },
+        });
+    } else {
+        // Fallback to environment variables
+        const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
+
+        if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
+            console.error("SMTP environment variables are not set and no DB config found.");
+            return { error: "The application is not configured to send emails. Please contact an administrator." };
+        }
+        transporter = nodemailer.createTransport({
+            host: SMTP_HOST,
+            port: Number(SMTP_PORT),
+            secure: Number(SMTP_PORT) === 465,
+            auth: { user: SMTP_USER, pass: SMTP_PASS },
+        });
     }
-
-    if (!SENDER_EMAIL) {
-        console.error("SENDER_EMAIL environment variable is not set.");
+    
+    const recipientEmail = smtpSettings?.senderEmail || process.env.SENDER_EMAIL;
+    if (!recipientEmail) {
+        console.error("Recipient email (SENDER_EMAIL) is not configured in DB or .env.");
         return { error: "The application's recipient email is not configured." };
     }
+    
+    const senderUser = smtpSettings?.user || process.env.SMTP_USER;
 
-
-    const transporter = nodemailer.createTransport({
-        host: SMTP_HOST,
-        port: Number(SMTP_PORT),
-        secure: Number(SMTP_PORT) === 465, // true for 465, false for other ports
-        auth: {
-            user: SMTP_USER,
-            pass: SMTP_PASS,
-        },
-    });
 
     try {
         await transporter.verify();
@@ -1038,9 +1063,9 @@ This email was automatically generated by the Remote Commander application.
 
     try {
         await transporter.sendMail({
-            from: `"Remote Commander Support" <${SMTP_USER}>`,
+            from: `"Remote Commander Support" <${senderUser}>`,
             replyTo: `"${name}" <${email}>`,
-            to: SENDER_EMAIL,
+            to: recipientEmail,
             subject: `New Support Request from ${name}`,
             text: emailPlainText,
             html: emailHtml,
@@ -1189,12 +1214,13 @@ export async function deleteAllNotifications() {
 
 export async function getServerMetrics(serverId: string) {
     const user = await getCurrentUser();
-    if (!user) {
-        return { error: 'Authentication failed. Please log in again.' };
-    }
-    const creds = await getServerByIdHelper(serverId, user._id);
-    if (!creds) {
-        return { error: 'Server not found or you do not have permission.' };
+    if (!user) return { error: 'Authentication failed. Please log in again.' };
+
+    const server = await getServerById(serverId);
+    if (!server) return { error: 'Server not found or you do not have permission.' };
+    
+    if (!canUser(server, Permission.EXECUTE, user)) {
+        return { error: 'You do not have permission to execute commands on this server.' };
     }
 
     try {
@@ -1225,10 +1251,10 @@ export async function getServerMetrics(serverId: string) {
             }).on('error', (err: Error) => {
                 resolve({ error: `Connection error: ${err.message}` });
             }).connect({
-                host: creds.ip,
-                port: Number(creds.port),
-                username: creds.username,
-                privateKey: decrypt(creds.privateKey || ''),
+                host: server.ip,
+                port: Number(server.port),
+                username: server.username,
+                privateKey: decrypt(server.privateKey || ''),
                 readyTimeout: 10000,
             });
         });

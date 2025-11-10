@@ -1,22 +1,30 @@
 
 
+import { Permission, PermissionLevel } from "./auth";
+
 export type ServerOwner = {
   _id: string;
   email: string;
 };
 
+export type ServerPermission = {
+  userId: string;
+  level: PermissionLevel;
+}
+
 export type Server = {
   _id?: string;
-  id?: string;
+  id: string;
   name: string;
   ip: string;
   port: number | string;
   username: string;
   status: 'active' | 'inactive' | 'connecting';
   privateKey?: string | undefined;
-  ownerId?: string;
-  guestIds?: string[];
+  ownerId: string;
+  permissions?: ServerPermission[];
   owner?: ServerOwner;
+  userPermission?: Permission; // Permission of the CURRENT user
 };
 
 export type CommandLog = {

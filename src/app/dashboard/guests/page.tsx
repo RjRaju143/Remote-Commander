@@ -1,3 +1,4 @@
+
 import { getGuestAccessDetails } from "@/lib/actions";
 import {
   Card,
@@ -6,8 +7,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Server, Users } from "lucide-react";
+import { Users } from "lucide-react";
 import { GuestList } from "@/components/dashboard/guest-list";
 
 export default async function GuestsPage() {

@@ -9,9 +9,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Server, Trash2, User } from "lucide-react";
+import { Server, Trash2 } from "lucide-react";
 import { type GuestAccessDetails, revokeGuestAccess } from "@/lib/actions";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -24,10 +24,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "../ui/badge";
+import { getPermissionBadgeVariant } from "@/lib/utils";
 
-type GuestListProps = {
-  initialGuestDetails: GuestAccessDetails;
-};
 
 type RevokeInfo = {
   serverId: string;
@@ -36,7 +35,7 @@ type RevokeInfo = {
   serverName: string;
 };
 
-export function GuestList({ initialGuestDetails }: GuestListProps) {
+export function GuestList({ initialGuestDetails }: {initialGuestDetails: GuestAccessDetails}) {
   const [guestDetails, setGuestDetails] = useState(initialGuestDetails);
   const [revokeInfo, setRevokeInfo] = useState<RevokeInfo | null>(null);
   const { toast } = useToast();
@@ -115,11 +114,16 @@ export function GuestList({ initialGuestDetails }: GuestListProps) {
               {guest.servers.map((server) => (
                 <li
                   key={server.serverId}
-                  className="flex items-center justify-between text-sm"
+                  className="flex items-center justify-between text-sm p-2 rounded-md hover:bg-muted/50"
                 >
-                  <div className="flex items-center gap-2">
-                    <Server className="text-muted-foreground" />
-                    <span>{server.serverName}</span>
+                  <div className="flex flex-col gap-1">
+                     <div className="flex items-center gap-2">
+                        <Server className="text-muted-foreground size-4" />
+                        <span>{server.serverName}</span>
+                    </div>
+                     <Badge variant={getPermissionBadgeVariant(server.permission)} className="w-fit">
+                        {server.permission}
+                    </Badge>
                   </div>
                   <Button
                     variant="ghost"

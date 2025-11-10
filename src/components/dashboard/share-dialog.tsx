@@ -12,12 +12,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useState } from "react";
+import { useState, useActionState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import type { Server } from "@/lib/types";
 import { shareServer } from "@/lib/actions";
-import { useFormStatus } from "react-dom";
 import { Loader2 } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Permission } from "@/lib/auth";
 
 type ShareDialogProps = {
   server: Server;
@@ -25,70 +26,82 @@ type ShareDialogProps = {
   onOpenChange: (open: boolean) => void;
 };
 
-function SubmitButton() {
-    const { pending } = useFormStatus();
-    return (
-        <Button type="submit" disabled={pending}>
-            {pending && <Loader2 className="animate-spin" />}
-            Grant Access
-        </Button>
-    )
-}
-
 export function ShareDialog({ server, open, onOpenChange }: ShareDialogProps) {
   const { toast, notify } = useToast();
-  const [email, setEmail] = useState("");
+  const [state, formAction, pending] = useActionState(shareServer, undefined);
 
-  const handleShareAction = async () => {
-    if (!server.id) return;
-    const result = await shareServer(server.id, email);
-    if (result.error) {
+   useEffect(() => {
+    if (state?.error) {
         toast({
             variant: "destructive",
             title: "Error",
-            description: result.error,
+            description: state.error,
         });
-    } else {
+    }
+    if (state?.success) {
         toast({
             title: "Access Granted",
-            description: `${email} now has access to ${server.name}.`,
+            description: state.message,
         });
-        if (result.notification) {
+        if (state.notification) {
             notify();
         }
         onOpenChange(false);
     }
-  }
+   }, [state, toast, notify, onOpenChange]);
+
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="font-headline">Share "{server.name}"</DialogTitle>
           <DialogDescription>
-            Enter the email of the user you want to grant access to this server. They will immediately be able to see and connect to it.
+            Grant another user access to this server by providing their email and selecting a permission level.
           </DialogDescription>
         </DialogHeader>
-        <form action={handleShareAction}>
-            <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="email" className="text-right">
-                Email
-                </Label>
-                <Input
-                    id="email"
-                    name="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="col-span-3"
-                    placeholder="user@example.com"
-                    required
-                />
-            </div>
+        <form action={formAction}>
+            <input type="hidden" name="serverId" value={server.id} />
+            <div className="grid gap-6 py-4">
+                <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="email" className="text-right">
+                    Email
+                    </Label>
+                    <Input
+                        id="email"
+                        name="email"
+                        type="email"
+                        className="col-span-3"
+                        placeholder="user@example.com"
+                        required
+                    />
+                </div>
+                <div className="grid grid-cols-4 items-start gap-4">
+                     <Label className="text-right pt-1">Permission</Label>
+                     <RadioGroup name="permission" defaultValue={Permission.EXECUTE} className="col-span-3 space-y-3">
+                        <div>
+                            <RadioGroupItem value={Permission.READ} id="read" />
+                            <Label htmlFor="read" className="font-normal ml-2">Read</Label>
+                            <p className="text-xs text-muted-foreground ml-6">Can view server details but cannot connect.</p>
+                        </div>
+                        <div>
+                            <RadioGroupItem value={Permission.EXECUTE} id="execute" />
+                             <Label htmlFor="execute" className="font-normal ml-2">Execute</Label>
+                             <p className="text-xs text-muted-foreground ml-6">Can connect to the server and run commands.</p>
+                        </div>
+                         <div>
+                            <RadioGroupItem value={Permission.ADMIN} id="admin" />
+                             <Label htmlFor="admin" className="font-normal ml-2">Admin</Label>
+                             <p className="text-xs text-muted-foreground ml-6">Can edit, delete, and share the server.</p>
+                        </div>
+                     </RadioGroup>
+                </div>
             </div>
             <DialogFooter>
-                <SubmitButton />
+                <Button type="submit" disabled={pending}>
+                    {pending && <Loader2 className="animate-spin" />}
+                    Grant Access
+                </Button>
             </DialogFooter>
         </form>
       </DialogContent>

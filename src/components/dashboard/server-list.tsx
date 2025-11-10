@@ -1,14 +1,15 @@
 
 
+
 "use client";
 
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { Server } from "@/lib/types";
-import { HardDrive, MoreVertical, PlusCircle, Wifi, WifiOff, Edit, Trash2, Terminal, Loader2, Users, User, Share2, Cpu, MemoryStick, Database, RefreshCcw, Star } from "lucide-react";
+import { HardDrive, MoreVertical, PlusCircle, Wifi, WifiOff, Edit, Trash2, Terminal, Loader2, Users, User, Share2, Cpu, MemoryStick, Database, RefreshCcw, Star, Eye } from "lucide-react";
 import { AddServerDialog } from "./add-server-dialog";
-import { useEffect, useState, useMemo, useCallback, useTransition } from "react";
+import { useEffect, useState, useCallback, useTransition } from "react";
 import { getServers, deleteServer, getCurrentUser, toggleFavoriteServer, getFavoriteServers } from "@/lib/actions";
 import {
   DropdownMenu,
@@ -32,9 +33,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ShareDialog } from "./share-dialog";
 import type { User as CurrentUser } from "@/models/User";
-import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
+import { canUser, Permission } from "@/lib/auth";
 
 
 type ServerWithHealth = Server & { 
@@ -60,18 +61,37 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
   const totalPages = Math.ceil(totalServers / SERVERS_PER_PAGE);
 
   const fetchServersAndUser = useCallback(async () => {
+    const user = await getCurrentUser();
+    setCurrentUser(user);
+
+    if (!user) return;
+
     let serversResponse;
     if (showOnlyFavorites) {
         serversResponse = await getFavoriteServers({ page: currentPage, limit: SERVERS_PER_PAGE });
     } else {
         serversResponse = await getServers({ page: currentPage, limit: SERVERS_PER_PAGE });
     }
-    const user = await getCurrentUser();
+    
+    // Enrich server data with permissions for the current user
+    const formattedServers = serversResponse.servers.map((s: any) => {
+        let userPermission = Permission.NONE;
+        if (s.ownerId === user._id) {
+            userPermission = Permission.ADMIN;
+        } else {
+            const permissionEntry = s.permissions?.find((p: any) => p.userId === user._id);
+            userPermission = permissionEntry ? permissionEntry.level : Permission.NONE;
+        }
+        return { 
+            ...s, 
+            id: s._id.toString(), 
+            status: s.status || 'inactive',
+            userPermission: userPermission,
+        }
+    });
 
-    const formattedServers = serversResponse.servers.map((s: any) => ({ ...s, id: s._id.toString(), status: s.status || 'inactive' }));
     setServers(formattedServers);
     setTotalServers(serversResponse.total);
-    setCurrentUser(user);
   }, [currentPage, showOnlyFavorites]);
 
   useEffect(() => {
@@ -168,7 +188,8 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
      
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {servers.map((server) => {
-          const isOwner = server.ownerId === currentUser?._id;
+          const hasAdminAccess = canUser(server, Permission.ADMIN);
+          const hasExecuteAccess = canUser(server, Permission.EXECUTE);
           const isFavorite = currentUser?.favorites?.includes(server.id!);
 
           return (
@@ -197,7 +218,7 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    {isOwner ? (
+                    {hasAdminAccess ? (
                       <>
                         <DropdownMenuItem onSelect={() => setEditingServer(server)}>
                           <Edit className="mr-2 h-4 w-4" />
@@ -222,11 +243,29 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
                 </DropdownMenu>
               </div>
             </CardHeader>
+            <CardContent className="flex-grow">
+               <div className="space-y-3 text-sm text-muted-foreground">
+                    {!hasAdminAccess && server.owner && (
+                        <div className="flex items-center gap-2">
+                            <User className="text-primary"/>
+                            <span>Shared by {server.owner.email}</span>
+                        </div>
+                    )}
+                </div>
+            </CardContent>
             <CardFooter>
-               <Button className="w-full" onClick={() => handleConnect(server.id!)} disabled={server.status === 'connecting'}>
-                  {server.status === 'connecting' ? <Loader2 className="animate-spin" /> : <Terminal />}
-                  {server.status === 'connecting' ? 'Connecting...' : 'Connect'}
-                </Button>
+               {hasExecuteAccess ? (
+                    <Button className="w-full" onClick={() => handleConnect(server.id!)} disabled={server.status === 'connecting'}>
+                        {server.status === 'connecting' ? <Loader2 className="animate-spin" /> : <Terminal />}
+                        {server.status === 'connecting' ? 'Connecting...' : 'Connect'}
+                    </Button>
+               ) : (
+                    <Button asChild className="w-full" variant="secondary">
+                        <Link href={`/dashboard/server/${server.id!}`}>
+                            <Eye /> View Details
+                        </Link>
+                    </Button>
+               )}
             </CardFooter>
           </Card>
         )})}
@@ -303,6 +342,7 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
             onOpenChange={(isOpen) => {
                 if (!isOpen) {
                     setSharingServer(null);
+                    fetchServersAndUser();
                 }
             }}
         />

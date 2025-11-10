@@ -1,12 +1,13 @@
 
 
+
 'use client';
 
 import { getServerById, testServerConnection } from '@/lib/actions';
 import { notFound, useRouter, useParams } from 'next/navigation';
 import { ShellClientWrapper } from '@/components/dashboard/shell-client-wrapper';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Loader2, ServerCrash, Wifi, Maximize, Minimize } from 'lucide-react';
+import { ArrowLeft, Loader2, ServerCrash, Wifi, Maximize, Minimize, ShieldAlert } from 'lucide-react';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { useEffect, useState, useRef } from 'react';
@@ -16,6 +17,7 @@ import { CommandClassifier } from '@/components/dashboard/command-classifier';
 import { Separator } from '@/components/ui/separator';
 import { ServerMetrics } from '@/components/dashboard/server-metrics';
 import { cn } from '@/lib/utils';
+import { canUser, Permission } from '@/lib/auth';
 
 
 type ConnectionStatus = 'connecting' | 'connected' | 'error';
@@ -29,6 +31,7 @@ export default function ServerShellPage() {
     const [isFullscreen, setIsFullscreen] = useState(false);
     const shellContainerRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
+    const [hasExecutePermission, setHasExecutePermission] = useState(false);
 
     useEffect(() => {
         if (!serverId) return;
@@ -40,6 +43,13 @@ export default function ServerShellPage() {
                 return;
             }
             setServer(serverData);
+            setHasExecutePermission(canUser(serverData, Permission.EXECUTE));
+
+            if (!canUser(serverData, Permission.EXECUTE)) {
+                setStatus('error');
+                setError('You do not have permission to connect to this server.');
+                return;
+            }
 
             const result = await testServerConnection(serverId);
             if (result.success) {
@@ -85,17 +95,17 @@ export default function ServerShellPage() {
                     </div>
                 );
             case 'error':
-                return (
+                 const Icon = hasExecutePermission ? ServerCrash : ShieldAlert;
+                 return (
                      <Card className="max-w-md mx-auto">
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
-                                <ServerCrash className="text-destructive" />
-                                Connection Failed
+                                <Icon className="text-destructive" />
+                                {hasExecutePermission ? 'Connection Failed' : 'Access Denied'}
                             </CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <p className="mb-4">Could not connect to the server. Please check the credentials and ensure the server is online.</p>
-                            <p className="text-sm bg-muted text-destructive p-2 rounded-md font-code">{error}</p>
+                            <p className="mb-4">{error}</p>
                             <Button onClick={() => router.back()} className="mt-6 w-full">
                                 <ArrowLeft />
                                 Go Back
