@@ -1,9 +1,11 @@
 
 
 
+
+
 'use client';
 
-import { getServerById, testServerConnection } from '@/lib/actions';
+import { getServerById, testServerConnection, getCurrentUser } from '@/lib/actions';
 import { notFound, useRouter, useParams } from 'next/navigation';
 import { ShellClientWrapper } from '@/components/dashboard/shell-client-wrapper';
 import { Button } from '@/components/ui/button';
@@ -18,6 +20,7 @@ import { Separator } from '@/components/ui/separator';
 import { ServerMetrics } from '@/components/dashboard/server-metrics';
 import { cn } from '@/lib/utils';
 import { canUser, Permission } from '@/lib/auth';
+import type { User } from '@/models/User';
 
 
 type ConnectionStatus = 'connecting' | 'connected' | 'error';
@@ -31,21 +34,30 @@ export default function ServerShellPage() {
     const [isFullscreen, setIsFullscreen] = useState(false);
     const shellContainerRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
+    const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [hasExecutePermission, setHasExecutePermission] = useState(false);
 
     useEffect(() => {
         if (!serverId) return;
 
         const fetchServerAndTestConnection = async () => {
-            const serverData = await getServerById(serverId);
-            if (!serverData) {
+            const [serverData, user] = await Promise.all([
+                getServerById(serverId),
+                getCurrentUser()
+            ]);
+            
+            if (!serverData || !user) {
                 notFound();
                 return;
             }
-            setServer(serverData);
-            setHasExecutePermission(canUser(serverData, Permission.EXECUTE));
 
-            if (!canUser(serverData, Permission.EXECUTE)) {
+            setCurrentUser(user);
+            setServer(serverData);
+            
+            const permission = await canUser(serverData, Permission.EXECUTE, user);
+            setHasExecutePermission(permission);
+
+            if (!permission) {
                 setStatus('error');
                 setError('You do not have permission to connect to this server.');
                 return;

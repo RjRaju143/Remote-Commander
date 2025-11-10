@@ -3,6 +3,8 @@ import type { User } from "@/models/User";
 import type { Server } from "./types";
 import { getInvitationsForUser } from "./invitations";
 import { ObjectId } from "mongodb";
+import { verifyJwt } from "./jwt";
+import clientPromise from "./mongodb";
 
 export enum Role {
     USER = 'user',
@@ -25,6 +27,7 @@ const permissionHierarchy: Record<Permission, number> = {
     [Permission.EXECUTE]: 2,
     [Permission.ADMIN]: 3,
 };
+
 
 /**
  * Checks if a user is a system admin.

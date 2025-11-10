@@ -1,6 +1,6 @@
 
 
-"use client";
+'use client';
 
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,8 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import type { Server } from "@/lib/types";
 import { HardDrive, MoreVertical, PlusCircle, Wifi, WifiOff, Edit, Trash2, Terminal, Loader2, Users, User, Share2, Cpu, MemoryStick, Database, RefreshCcw, Star, Eye } from "lucide-react";
 import { AddServerDialog } from "./add-server-dialog";
-import { useEffect, useState, useCallback, useTransition } from "react";
-import { getServers, deleteServer, getCurrentUser, toggleFavoriteServer, getFavoriteServers } from "@/lib/actions";
+import { useEffect, useState, useCallback, useTransition, useRef } from "react";
+import { getServers, deleteServer, toggleFavoriteServer, getFavoriteServers, getCurrentUser } from "@/lib/actions";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -73,21 +73,23 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
     }
     
     // Enrich server data with permissions for the current user
-    const formattedServers = serversResponse.servers.map((s: any) => {
+    const formattedServers = await Promise.all(serversResponse.servers.map(async (s: any) => {
         let userPermission = Permission.NONE;
         if (s.ownerId === user._id) {
             userPermission = Permission.ADMIN;
         } else {
-            const permissionEntry = s.permissions?.find((p: any) => p.userId === user._id);
-            userPermission = permissionEntry ? permissionEntry.level : Permission.NONE;
+             userPermission = await canUser(s, Permission.READ, user) ? Permission.READ : Permission.NONE;
+             if (await canUser(s, Permission.EXECUTE, user)) userPermission = Permission.EXECUTE;
+             if (await canUser(s, Permission.ADMIN, user)) userPermission = Permission.ADMIN;
         }
+
         return { 
             ...s, 
             id: s._id.toString(), 
             status: s.status || 'inactive',
             userPermission: userPermission,
         }
-    });
+    }));
 
     setServers(formattedServers);
     setTotalServers(serversResponse.total);
@@ -173,18 +175,19 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
   }, [fetchServersAndUser]);
 
   const handleEditServerOpenChange = useCallback((isOpen: boolean) => {
+    setEditingServer(null);
     if (!isOpen) {
-      setEditingServer(null);
       fetchServersAndUser();
     }
   }, [fetchServersAndUser]);
   
   const handleShareServerOpenChange = useCallback((isOpen: boolean) => {
+    setSharingServer(null);
     if (!isOpen) {
-      setSharingServer(null);
       fetchServersAndUser();
     }
   }, [fetchServersAndUser]);
+
 
   return (
     <section>
@@ -205,8 +208,8 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
      
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {servers.map((server) => {
-          const hasAdminAccess = canUser(server, Permission.ADMIN);
-          const hasExecuteAccess = canUser(server, Permission.EXECUTE);
+          const hasAdminAccess = server.userPermission === Permission.ADMIN;
+          const hasExecuteAccess = server.userPermission === Permission.EXECUTE || hasAdminAccess;
           const isFavorite = currentUser?.favorites?.includes(server.id!);
 
           return (

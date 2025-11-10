@@ -19,7 +19,7 @@ import { decrypt, encrypt, getServerById as getServerByIdHelper } from "./server
 import { verifyJwt } from "./jwt";
 import { getServerMetricsCommand } from "@/ai/flows/get-server-metrics";
 import { canUser, isUserAdmin, Permission, PermissionLevel, getUserPermission } from "./auth";
-import { getInvitationsForUser } from "./invitations";
+import { getInvitationsForUser, getInvitationByToken, inviteUserToServer } from "./invitations";
 
 export interface GenerateCommandState {
   result?: any;
@@ -413,39 +413,6 @@ export async function addServer(
   }
 }
 
-
-
-export async function getCurrentUser(): Promise<User | null> {
-  const cookieStore = await cookies()
-    const token = cookieStore.get('session')?.value;
-    if (!token) return null;
-
-    const decoded = await verifyJwt(token);
-    if (!decoded || !decoded.userId) return null;
-    
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-        const user = await db.collection('users').findOne(
-            { _id: new ObjectId(decoded.userId as string) },
-        );
-        if (!user) {
-            return null;
-        }
-        
-        const plainUser = JSON.parse(JSON.stringify(user));
-        plainUser._id = plainUser._id.toString();
-        // Ensure favorites is an array even if it's missing
-        plainUser.favorites = plainUser.favorites?.map((id: ObjectId | string) => id.toString()) || [];
-        plainUser.roles = plainUser.roles || ['user'];
-
-        return plainUser;
-    } catch (error) {
-        console.error('Failed to fetch user:', error);
-        return null;
-    }
-}
-
 const UpdateServerSchema = ServerSchema.partial().extend({
     serverId: z.string().refine((id) => ObjectId.isValid(id)),
 });
@@ -468,7 +435,8 @@ export async function updateServer(
   const server = await getServerById(serverId);
   if (!server) return { error: "Server not found." };
   
-  if (!await canUser(server, Permission.ADMIN, user)) {
+  const hasPermission = await canUser(server, Permission.ADMIN, user);
+  if (!hasPermission) {
     return { error: "You do not have permission to update this server." };
   }
 
@@ -521,7 +489,8 @@ export async function deleteServer(serverId: string) {
       return { error: "Server not found." };
     }
     
-    if (!await canUser(serverToDelete, Permission.ADMIN, user)) {
+    const hasPermission = await canUser(serverToDelete, Permission.ADMIN, user);
+    if (!hasPermission) {
       return { error: "You do not have permission to delete this server." };
     }
 
@@ -551,7 +520,8 @@ export async function testServerConnection(serverId: string): Promise<{ success:
     const server = await getServerById(serverId);
     if (!server) return { success: false, error: 'Server not found or you do not have permission.' };
     
-    if (!await canUser(server, Permission.EXECUTE, user)) {
+    const hasPermission = await canUser(server, Permission.EXECUTE, user);
+    if (!hasPermission) {
         return { success: false, error: 'You do not have permission to connect to this server.' };
     }
 
@@ -600,7 +570,8 @@ export async function getServerPrivateKey(serverId: string): Promise<{error?: st
   const server = await getServerById(serverId);
   if (!server) return { error: "Server not found or you do not have permission to download the key." };
 
-  if (!await canUser(server, Permission.ADMIN, user)) {
+  const hasPermission = await canUser(server, Permission.ADMIN, user);
+  if (!hasPermission) {
     return { error: "You do not have permission to download this key." };
   }
 
@@ -1059,7 +1030,8 @@ export async function getServerMetrics(serverId: string) {
     const server = await getServerById(serverId);
     if (!server) return { error: 'Server not found or you do not have permission.' };
     
-    if (!await canUser(server, Permission.EXECUTE, user)) {
+    const hasPermission = await canUser(server, Permission.EXECUTE, user);
+    if (!hasPermission) {
         return { error: 'You do not have permission to execute commands on this server.' };
     }
 
@@ -1212,5 +1184,73 @@ export async function testSmtpConnection(
         return { success: true, message: "Connection successful!" };
     } catch (error: any) {
         return { error: `Connection failed: ${error.message}` };
+    }
+}
+
+export async function handleInvitation(token: string, action: 'accept' | 'decline') {
+    const user = await getCurrentUser();
+    if (!user) return { error: "You must be logged in to respond to an invitation." };
+
+    const db = (await clientPromise).db();
+    const invitation = await db.collection('invitations').findOne({ token, status: 'pending', expiresAt: { $gt: new Date() } });
+
+    if (!invitation) return { error: "This invitation is invalid or has expired." };
+    if (invitation.email !== user.email) return { error: "This invitation is for a different user." };
+    if (invitation.ownerId.toString() === user._id) return { error: "You cannot accept an invitation you sent." };
+
+    if (action === 'decline') {
+        await db.collection('invitations').updateOne({ _id: invitation._id }, { $set: { status: 'declined', recipientId: new ObjectId(user._id) } });
+        return { success: true, message: "You have declined the invitation." };
+    }
+
+    // Accept
+    const result = await db.collection('invitations').findOneAndUpdate(
+        { _id: invitation._id },
+        { $set: { status: 'accepted', recipientId: new ObjectId(user._id) } },
+        { returnDocument: 'after' }
+    );
+    
+    if (result) {
+        await createNotification(invitation.ownerId.toString(), `${user.email} has accepted your invitation to access a server.`, 'server_shared');
+        revalidatePath('/dashboard/guests');
+        revalidatePath('/dashboard');
+        return { success: true, serverId: invitation.serverId.toString() };
+    } else {
+        return { error: 'Failed to accept invitation.' };
+    }
+}
+
+
+/**
+ * Gets the currently logged-in user from the session cookie.
+ */
+export async function getCurrentUser(): Promise<User | null> {
+    const cookieStore = await cookies()
+    const token = cookieStore.get('session')?.value;
+    if (!token) return null;
+
+    const decoded = await verifyJwt(token);
+    if (!decoded || !decoded.userId) return null;
+    
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        const user = await db.collection('users').findOne(
+            { _id: new ObjectId(decoded.userId as string) },
+        );
+        if (!user) {
+            return null;
+        }
+        
+        const plainUser = JSON.parse(JSON.stringify(user));
+        plainUser._id = plainUser._id.toString();
+        // Ensure favorites is an array even if it's missing
+        plainUser.favorites = plainUser.favorites?.map((id: ObjectId | string) => id.toString()) || [];
+        plainUser.roles = plainUser.roles || ['user'];
+
+        return plainUser;
+    } catch (error) {
+        console.error('Failed to fetch user:', error);
+        return null;
     }
 }

@@ -5,7 +5,8 @@ import { z } from 'zod';
 import { ObjectId } from 'mongodb';
 import { randomBytes } from 'crypto';
 import clientPromise from './mongodb';
-import { canUser, getCurrentUser, isUserAdmin, Permission, PermissionLevel } from './auth';
+import { canUser, isUserAdmin, Permission, PermissionLevel } from './auth';
+import { getCurrentUser } from './actions';
 import nodemailer from 'nodemailer';
 import { decrypt } from './server-helpers';
 import { revalidatePath } from 'next/cache';
@@ -162,58 +163,6 @@ async function sendInvitationEmail(recipientEmail: string, ownerEmail: string, s
     });
 }
 
-export async function getInvitationByToken(token: string): Promise<InvitationWithDetails | null> {
-    const db = (await clientPromise).db();
-    const invitation = await db.collection('invitations').findOne({ token, status: 'pending', expiresAt: { $gt: new Date() } });
-
-    if (!invitation) return null;
-
-    const [server, owner] = await Promise.all([
-        db.collection('servers').findOne({ _id: invitation.serverId }),
-        db.collection('users').findOne({ _id: invitation.ownerId }),
-    ]);
-
-    if (!server || !owner) return null;
-
-    const plainInvite = JSON.parse(JSON.stringify(invitation));
-    plainInvite.server = { name: server.name };
-    plainInvite.owner = { email: owner.email };
-    return plainInvite;
-}
-
-export async function handleInvitation(token: string, action: 'accept' | 'decline') {
-    const user = await getCurrentUser();
-    if (!user) return { error: "You must be logged in to respond to an invitation." };
-
-    const db = (await clientPromise).db();
-    const invitation = await db.collection('invitations').findOne({ token, status: 'pending', expiresAt: { $gt: new Date() } });
-
-    if (!invitation) return { error: "This invitation is invalid or has expired." };
-    if (invitation.email !== user.email) return { error: "This invitation is for a different user." };
-    if (invitation.ownerId.toString() === user._id) return { error: "You cannot accept an invitation you sent." };
-
-    if (action === 'decline') {
-        await db.collection('invitations').updateOne({ _id: invitation._id }, { $set: { status: 'declined', recipientId: new ObjectId(user._id) } });
-        return { success: true, message: "You have declined the invitation." };
-    }
-
-    // Accept
-    const result = await db.collection('invitations').findOneAndUpdate(
-        { _id: invitation._id },
-        { $set: { status: 'accepted', recipientId: new ObjectId(user._id) } },
-        { returnDocument: 'after' }
-    );
-    
-    if (result) {
-        await createNotification(invitation.ownerId.toString(), `${user.email} has accepted your invitation to access a server.`, 'server_shared');
-        revalidatePath('/dashboard/guests');
-        revalidatePath('/dashboard');
-        return { success: true, serverId: invitation.serverId.toString() };
-    } else {
-        return { error: 'Failed to accept invitation.' };
-    }
-}
-
 export async function getSentInvitations() {
     const user = await getCurrentUser();
     if (!user) return [];
@@ -313,4 +262,24 @@ export async function revokeInvitation(invitationId: string) {
     revalidatePath('/dashboard');
     
     return { success: true };
+}
+
+
+export async function getInvitationByToken(token: string): Promise<any | null> {
+    const db = (await clientPromise).db();
+    const invitation = await db.collection('invitations').findOne({ token, status: 'pending', expiresAt: { $gt: new Date() } });
+
+    if (!invitation) return null;
+
+    const [server, owner] = await Promise.all([
+        db.collection('servers').findOne({ _id: invitation.serverId }),
+        db.collection('users').findOne({ _id: invitation.ownerId }),
+    ]);
+
+    if (!server || !owner) return null;
+
+    const plainInvite = JSON.parse(JSON.stringify(invitation));
+    plainInvite.server = { name: server.name };
+    plainInvite.owner = { email: owner.email };
+    return plainInvite;
 }

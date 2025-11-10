@@ -3,7 +3,8 @@
 
 import { useEffect, useState, useTransition } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { getInvitationByToken, handleInvitation, getCurrentUser } from '@/lib/actions';
+import { handleInvitation, getCurrentUser } from '@/lib/actions';
+import { getInvitationByToken } from '@/lib/invitations';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Loader2, MailWarning, Check, X, User } from 'lucide-react';
