@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
-import { handleInvitation } from '@/lib/invitations';
+import { handleInvitation } from '@/lib/actions';
 import type { InvitationWithDetails } from '@/lib/invitations';
 import { Badge } from '../ui/badge';
 import { getPermissionBadgeVariant } from '@/lib/utils';

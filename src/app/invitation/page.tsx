@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
+import { useEffect, useState, useTransition, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { handleInvitation, getCurrentUser } from '@/lib/actions';
 import { getInvitationByToken } from '@/lib/invitations';
@@ -13,7 +13,8 @@ import type { InvitationWithDetails } from '@/lib/invitations';
 
 type Status = 'loading' | 'valid' | 'invalid' | 'error' | 'not_logged_in' | 'wrong_user' | 'processing';
 
-export default function InvitationPage() {
+
+function InvitationComponent() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const token = searchParams.get('token');
@@ -152,11 +153,17 @@ export default function InvitationPage() {
         }
     }
 
+    return <Card className="w-full max-w-md">{renderContent()}</Card>;
+}
+
+
+export default function InvitationPage() {
     return (
         <div className="flex min-h-screen flex-col items-center justify-center p-4">
-            <Card className="w-full max-w-md">
-                {renderContent()}
-            </Card>
+            <Suspense fallback={<Card className="w-full max-w-md h-64 flex items-center justify-center"><Loader2 className="size-12 animate-spin" /></Card>}>
+                <InvitationComponent />
+            </Suspense>
         </div>
     );
 }
+
