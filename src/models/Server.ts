@@ -1,12 +1,6 @@
 
 import { z } from 'zod';
 import { ObjectId } from 'mongodb';
-import { Permission } from '@/lib/auth';
-
-const PermissionSchema = z.object({
-  userId: z.instanceof(ObjectId),
-  level: z.nativeEnum(Permission),
-});
 
 export const ServerSchema = z.object({
   name: z.string().min(1, 'Server name is required.'),
@@ -24,7 +18,6 @@ export const ServerSchema = z.object({
   username: z.string().min(1, 'Username is required.'),
   privateKey: z.string().optional(),
   ownerId: z.instanceof(ObjectId).optional(),
-  permissions: z.array(PermissionSchema).optional(),
 });
 
 export type ServerModel = z.infer<typeof ServerSchema>;

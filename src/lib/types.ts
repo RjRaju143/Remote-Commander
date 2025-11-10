@@ -1,16 +1,10 @@
 
-
-import { Permission, PermissionLevel } from "./auth";
+import { Permission } from "./auth";
 
 export type ServerOwner = {
   _id: string;
   email: string;
 };
-
-export type ServerPermission = {
-  userId: string;
-  level: PermissionLevel;
-}
 
 export type Server = {
   _id?: string;
@@ -22,7 +16,6 @@ export type Server = {
   status: 'active' | 'inactive' | 'connecting';
   privateKey?: string | undefined;
   ownerId: string;
-  permissions?: ServerPermission[];
   owner?: ServerOwner;
   userPermission?: Permission; // Permission of the CURRENT user
 };

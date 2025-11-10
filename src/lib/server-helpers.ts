@@ -1,5 +1,4 @@
 
-
 import clientPromise from "./mongodb";
 import { ObjectId } from "mongodb";
 import CryptoJS from "crypto-js";
@@ -24,19 +23,23 @@ export async function getServerById(serverId: string, userId: string | null): Pr
     
     const userIsAdmin = (user.roles as string[])?.includes('admin');
 
-    // Admin can get any server, others must be owner or have permissions
-    const query = userIsAdmin 
-      ? { _id: serverObjectId }
-      : { 
-          _id: serverObjectId,
-          $or: [
-            { ownerId: userObjectId },
-            { "permissions.userId": userObjectId }
-          ]
-        };
-
-    const server = await db.collection('servers').findOne(query);
+    const server = await db.collection('servers').findOne({ _id: serverObjectId });
     if (!server) return null;
+
+    // Now check permissions
+    if (userIsAdmin || server.ownerId.equals(userObjectId)) {
+      // Allow access
+    } else {
+      // Check for an accepted invitation
+      const invitation = await db.collection('invitations').findOne({
+        serverId: serverObjectId,
+        recipientId: userObjectId,
+        status: 'accepted'
+      });
+      if (!invitation) {
+        return null; // No access
+      }
+    }
 
     const serverDoc = server as any;
     const serverData = JSON.parse(JSON.stringify(serverDoc));

@@ -1,5 +1,4 @@
 
-
 'use server';
 
 import { z } from "zod";
@@ -19,7 +18,8 @@ import { NotificationModel, NotificationSchema, NotificationType } from "@/model
 import { decrypt, encrypt, getServerById as getServerByIdHelper } from "./server-helpers";
 import { verifyJwt } from "./jwt";
 import { getServerMetricsCommand } from "@/ai/flows/get-server-metrics";
-import { canUser, isUserAdmin, Permission, PermissionLevel } from "./auth";
+import { canUser, isUserAdmin, Permission, PermissionLevel, getUserPermission } from "./auth";
+import { getInvitationsForUser } from "./invitations";
 
 export interface GenerateCommandState {
   result?: any;
@@ -183,13 +183,18 @@ export async function getServers({ page = 1, limit = 6, noSort = false }: { page
     const userObjectId = new ObjectId(user._id);
     
     const userIsAdmin = isUserAdmin(user);
-    const skip = (page - 1) * limit;
 
+    // Get server IDs from accepted invitations for the user
+    const invitations = await getInvitationsForUser(user._id);
+    const guestServerIds = invitations
+      .filter(inv => inv.status === 'accepted')
+      .map(inv => inv.serverId);
+    
     const matchStage = { 
         $match: userIsAdmin ? {} : { // Admins see all servers
           $or: [
             { ownerId: userObjectId }, 
-            { "permissions.userId": userObjectId }
+            { _id: { $in: guestServerIds } }
           ] 
         } 
       };
@@ -220,6 +225,8 @@ export async function getServers({ page = 1, limit = 6, noSort = false }: { page
     } else {
       serversPipeline.push({ $sort: { name: 1 } });
     }
+    
+    const skip = (page - 1) * limit;
 
     serversPipeline.push({ $skip: skip });
     serversPipeline.push({ $limit: limit });
@@ -231,7 +238,6 @@ export async function getServers({ page = 1, limit = 6, noSort = false }: { page
         username: 1,
         status: 1,
         ownerId: 1,
-        permissions: 1,
         owner: {
           _id: '$ownerInfo._id',
           email: '$ownerInfo.email'
@@ -270,8 +276,13 @@ export async function getFavoriteServers({ page = 1, limit = 6 }: { page?: numbe
   try {
     const client = await clientPromise;
     const db = client.db();
-    const userObjectId = new ObjectId(user._id);
     const favoriteIds = user.favorites.map(id => new ObjectId(id));
+    
+    // Get server IDs from accepted invitations for the user
+    const invitations = await getInvitationsForUser(user._id);
+    const guestServerIds = invitations
+      .filter(inv => inv.status === 'accepted')
+      .map(inv => inv.serverId);
     
     const userIsAdmin = isUserAdmin(user);
 
@@ -280,8 +291,8 @@ export async function getFavoriteServers({ page = 1, limit = 6 }: { page?: numbe
         _id: { $in: favoriteIds },
         ...(userIsAdmin ? {} : { // Admin can see any favorite, others must have permission
              $or: [
-              { ownerId: userObjectId },
-              { "permissions.userId": userObjectId }
+              { ownerId: new ObjectId(user._id) },
+              { _id: { $in: guestServerIds } }
             ]
         })
       }
@@ -311,7 +322,6 @@ export async function getFavoriteServers({ page = 1, limit = 6 }: { page?: numbe
           username: 1,
           status: 1,
           ownerId: 1,
-          permissions: 1,
           owner: {
             _id: '$ownerInfo._id',
             email: '$ownerInfo.email'
@@ -349,18 +359,13 @@ export async function getServerById(serverId: string): Promise<Server | null> {
   if (!server) return null;
 
   // Enrich with current user's permission
-  if (server.ownerId === user._id) {
-    server.userPermission = Permission.ADMIN;
-  } else {
-    const permissionEntry = server.permissions?.find(p => p.userId === user._id);
-    server.userPermission = permissionEntry ? permissionEntry.level : Permission.NONE;
-  }
+  server.userPermission = await getUserPermission(server, user);
 
   return server;
 }
 
 
-const AddServerSchema = ServerSchema.omit({ ownerId: true, permissions: true });
+const AddServerSchema = ServerSchema.omit({ ownerId: true });
 
 export async function addServer(
   prevState: AuthState | undefined,
@@ -386,7 +391,6 @@ export async function addServer(
     const serverToInsert: Record<string, any> = {
       ...serverDetails,
       ownerId: new ObjectId(user._id),
-      permissions: [],
       status: 'inactive'
     };
 
@@ -464,7 +468,7 @@ export async function updateServer(
   const server = await getServerById(serverId);
   if (!server) return { error: "Server not found." };
   
-  if (!canUser(server, Permission.ADMIN, user)) {
+  if (!await canUser(server, Permission.ADMIN, user)) {
     return { error: "You do not have permission to update this server." };
   }
 
@@ -517,10 +521,12 @@ export async function deleteServer(serverId: string) {
       return { error: "Server not found." };
     }
     
-    if (!canUser(serverToDelete, Permission.ADMIN, user)) {
+    if (!await canUser(serverToDelete, Permission.ADMIN, user)) {
       return { error: "You do not have permission to delete this server." };
     }
 
+    // Also delete all invitations associated with this server
+    await db.collection("invitations").deleteMany({ serverId: new ObjectId(serverToDelete.id) });
     const result = await db.collection("servers").deleteOne({ _id: new ObjectId(serverToDelete.id) });
 
     if (result.deletedCount === 0) {
@@ -545,7 +551,7 @@ export async function testServerConnection(serverId: string): Promise<{ success:
     const server = await getServerById(serverId);
     if (!server) return { success: false, error: 'Server not found or you do not have permission.' };
     
-    if (!canUser(server, Permission.EXECUTE, user)) {
+    if (!await canUser(server, Permission.EXECUTE, user)) {
         return { success: false, error: 'You do not have permission to connect to this server.' };
     }
 
@@ -585,84 +591,6 @@ export async function testServerConnection(serverId: string): Promise<{ success:
     });
 }
 
-// Sharing Actions
-const ShareServerSchema = z.object({
-    serverId: z.string().refine(id => ObjectId.isValid(id)),
-    email: z.string().email(),
-    permission: z.nativeEnum(Permission),
-});
-
-export async function shareServer(
-  prevState: AuthState | undefined,
-  formData: FormData
-): Promise<AuthState> {
-  const owner = await getCurrentUser();
-  if (!owner) return { error: "You must be logged in." };
-  
-  const validatedFields = ShareServerSchema.safeParse(Object.fromEntries(formData.entries()));
-
-  if (!validatedFields.success) {
-    return { error: "Invalid data provided." };
-  }
-
-  const { serverId, email: emailToShareWith, permission } = validatedFields.data;
-
-  const server = await getServerById(serverId);
-  if (!server) return { error: "Server not found." };
-  
-  if (!canUser(server, Permission.ADMIN, owner)) {
-    return { error: "You do not have permission to share this server." };
-  }
-  
-  if (owner.email === emailToShareWith) {
-    return { error: "You cannot share a server with yourself." };
-  }
-
-  try {
-    const client = await clientPromise;
-    const db = client.db();
-
-    const userToShareWith = await db.collection('users').findOne({ email: emailToShareWith });
-    if (!userToShareWith) {
-      return { error: `User with email "${emailToShareWith}" not found.` };
-    }
-    
-    const guestId = userToShareWith._id;
-
-    // Check if user already has permissions, and if so, update them. Otherwise, add them.
-    const existingPermission = server.permissions?.find(p => p.userId.toString() === guestId.toString());
-
-    if (existingPermission) {
-        // Update existing permission
-        if (existingPermission.level === permission) {
-            return { error: `This user already has '${permission}' permission.` };
-        }
-        await db.collection('servers').updateOne(
-            { _id: new ObjectId(serverId), "permissions.userId": guestId },
-            { $set: { "permissions.$.level": permission } }
-        );
-    } else {
-        // Add new permission
-        await db.collection('servers').updateOne(
-            { _id: new ObjectId(serverId) },
-            { $addToSet: { permissions: { userId: guestId, level: permission } } }
-        );
-    }
-    
-    await createNotification(owner._id, `You granted '${permission}' access for "${server.name}" to ${emailToShareWith}.`, 'server_shared');
-    await createNotification(userToShareWith._id.toString(), `${owner.email} granted you '${permission}' access to the server "${server.name}".`, 'server_shared', `/dashboard/server/${serverId}`);
-
-    revalidatePath('/dashboard');
-    revalidatePath('/dashboard/guests');
-
-    return { success: true, message: `${emailToShareWith} now has '${permission}' access to ${server.name}.`, notification: true };
-  } catch (error) {
-    console.error("Failed to share server:", error);
-    return { error: "An unexpected error occurred." };
-  }
-}
-
-
 export async function getServerPrivateKey(serverId: string): Promise<{error?: string; privateKey?: string}> {
   const user = await getCurrentUser();
   if (!user) return { error: "You must be logged in." };
@@ -672,7 +600,7 @@ export async function getServerPrivateKey(serverId: string): Promise<{error?: st
   const server = await getServerById(serverId);
   if (!server) return { error: "Server not found or you do not have permission to download the key." };
 
-  if (!canUser(server, Permission.ADMIN, user)) {
+  if (!await canUser(server, Permission.ADMIN, user)) {
     return { error: "You do not have permission to download this key." };
   }
 
@@ -688,107 +616,6 @@ export async function getServerPrivateKey(serverId: string): Promise<{error?: st
     console.error('Failed to fetch private key:', error);
     return { error: 'An unexpected error occurred while retrieving the key.' };
   }
-}
-
-// Guest Management Actions
-
-export type GuestAccessDetails = {
-    guestId: string;
-    guestEmail: string;
-    servers: {
-      serverId: string;
-      serverName: string;
-      permission: PermissionLevel;
-    }[];
-}[];
-
-export async function getGuestAccessDetails(): Promise<GuestAccessDetails> {
-    const owner = await getCurrentUser();
-    if (!owner) return [];
-    
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-        const ownerId = new ObjectId(owner._id);
-
-        const servers = await db.collection('servers').find({ ownerId, "permissions.0": { $exists: true } }).toArray();
-        if (servers.length === 0) return [];
-
-        const guestMap = new Map<string, { guestEmail: string; servers: { serverId: string; serverName: string, permission: PermissionLevel }[] }>();
-
-        const allGuestIds = servers.flatMap(s => s.permissions?.map(p => p.userId) || []);
-        const uniqueGuestIds = [...new Set(allGuestIds.map(id => id.toString()))].map(id => new ObjectId(id));
-        if (uniqueGuestIds.length === 0) return [];
-
-        const guests = await db.collection('users').find({ _id: { $in: uniqueGuestIds } }).toArray();
-        const guestUserMap = new Map(guests.map(g => [g._id.toString(), g.email]));
-
-        for (const server of servers) {
-            if (server.permissions) {
-                for (const perm of server.permissions) {
-                    const guestIdStr = perm.userId.toString();
-                    const guestEmail = guestUserMap.get(guestIdStr);
-
-                    if (guestEmail) {
-                        if (!guestMap.has(guestIdStr)) {
-                            guestMap.set(guestIdStr, { guestEmail, servers: [] });
-                        }
-                        guestMap.get(guestIdStr)!.servers.push({
-                            serverId: server._id.toString(),
-                            serverName: server.name,
-                            permission: perm.level,
-                        });
-                    }
-                }
-            }
-        }
-
-        return Array.from(guestMap.entries()).map(([guestId, data]) => ({
-            guestId,
-            ...data
-        }));
-
-    } catch (error) {
-        console.error("Failed to get guest access details:", error);
-        return [];
-    }
-}
-
-
-export async function revokeGuestAccess(serverId: string, guestId: string) {
-    const owner = await getCurrentUser();
-    if (!owner) return { error: "You must be logged in." };
-
-    if (!ObjectId.isValid(serverId) || !ObjectId.isValid(guestId)) {
-        return { error: "Invalid ID provided." };
-    }
-
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-        const ownerId = new ObjectId(owner._id);
-        const serverObjectId = new ObjectId(serverId);
-        const guestObjectId = new ObjectId(guestId);
-
-        const result = await db.collection('servers').updateOne(
-            { _id: serverObjectId, ownerId: ownerId },
-            { $pull: { permissions: { userId: guestObjectId } } as any }
-        );
-
-        if (result.matchedCount === 0) {
-            return { error: "Server not found or you do not have permission to modify it." };
-        }
-        if (result.modifiedCount === 0) {
-            return { error: "Guest not found on this server or access already revoked." };
-        }
-
-        revalidatePath('/dashboard/guests');
-        return { success: true };
-
-    } catch (error) {
-        console.error("Failed to revoke guest access:", error);
-        return { error: "An unexpected error occurred." };
-    }
 }
 
 const ChangePasswordSchema = z.object({
@@ -1232,7 +1059,7 @@ export async function getServerMetrics(serverId: string) {
     const server = await getServerById(serverId);
     if (!server) return { error: 'Server not found or you do not have permission.' };
     
-    if (!canUser(server, Permission.EXECUTE, user)) {
+    if (!await canUser(server, Permission.EXECUTE, user)) {
         return { error: 'You do not have permission to execute commands on this server.' };
     }
 
@@ -1387,4 +1214,3 @@ export async function testSmtpConnection(
         return { error: `Connection failed: ${error.message}` };
     }
 }
-

@@ -1,6 +1,8 @@
 
 import type { User } from "@/models/User";
 import type { Server } from "./types";
+import { getInvitationsForUser } from "./invitations";
+import { ObjectId } from "mongodb";
 
 export enum Role {
     USER = 'user',
@@ -39,15 +41,18 @@ export function isUserAdmin(user: User): boolean {
  * @param user The user object.
  * @returns The user's permission level.
  */
-export function getUserPermission(server: Server, user: User): Permission {
+export async function getUserPermission(server: Server, user: User): Promise<Permission> {
     if (isUserAdmin(user)) {
         return Permission.ADMIN;
     }
     if (server.ownerId === user._id) {
         return Permission.ADMIN;
     }
-    const userPermission = server.permissions?.find(p => p.userId === user._id);
-    return userPermission?.level || Permission.NONE;
+
+    const invitations = await getInvitationsForUser(user._id);
+    const relevantInvitation = invitations.find(inv => inv.serverId.toString() === server.id && inv.status === 'accepted');
+
+    return relevantInvitation?.permission || Permission.NONE;
 }
 
 /**
@@ -57,13 +62,8 @@ export function getUserPermission(server: Server, user: User): Permission {
  * @param user The user object (optional, defaults to current user).
  * @returns True if the user has the required permission.
  */
-export function canUser(server: Server, requiredPermission: Permission, user?: User): boolean {
-    // If a user object is passed, use it, otherwise use the permission embedded in the server object.
-    const userPermission = user ? getUserPermission(server, user) : server.userPermission;
-
-    if (!userPermission) {
-        return false;
-    }
+export async function canUser(server: Server, requiredPermission: Permission, user: User): Promise<boolean> {
+    const userPermission = await getUserPermission(server, user);
     
     const userLevel = permissionHierarchy[userPermission];
     const requiredLevel = permissionHierarchy[requiredPermission];

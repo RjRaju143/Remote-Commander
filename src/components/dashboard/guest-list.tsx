@@ -11,8 +11,8 @@ import {
 } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Server, Trash2 } from "lucide-react";
-import { type GuestAccessDetails, revokeGuestAccess } from "@/lib/actions";
+import { Server, Trash2, Clock } from "lucide-react";
+import { revokeInvitation } from "@/lib/invitations";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
@@ -26,36 +26,33 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { getPermissionBadgeVariant } from "@/lib/utils";
+import type { InvitationWithDetails } from "@/lib/invitations";
+import { formatDistanceToNow } from "date-fns";
 
 
 type RevokeInfo = {
-  serverId: string;
-  guestId: string;
+  invitationId: string;
   guestEmail: string;
   serverName: string;
 };
 
-export function GuestList({ initialGuestDetails }: {initialGuestDetails: GuestAccessDetails}) {
-  const [guestDetails, setGuestDetails] = useState(initialGuestDetails);
+export function GuestList({ initialInvitations }: {initialInvitations: InvitationWithDetails[]}) {
+  const [invitations, setInvitations] = useState(initialInvitations);
   const [revokeInfo, setRevokeInfo] = useState<RevokeInfo | null>(null);
   const { toast } = useToast();
 
   const handleRevokeClick = (
-    serverId: string,
-    guestId: string,
+    invitationId: string,
     guestEmail: string,
     serverName: string
   ) => {
-    setRevokeInfo({ serverId, guestId, guestEmail, serverName });
+    setRevokeInfo({ invitationId, guestEmail, serverName });
   };
 
   const handleRevokeConfirm = async () => {
     if (!revokeInfo) return;
 
-    const result = await revokeGuestAccess(
-      revokeInfo.serverId,
-      revokeInfo.guestId
-    );
+    const result = await revokeInvitation(revokeInfo.invitationId);
 
     if (result.error) {
       toast({
@@ -66,41 +63,42 @@ export function GuestList({ initialGuestDetails }: {initialGuestDetails: GuestAc
     } else {
       toast({
         title: "Access Revoked",
-        description: `Access for ${revokeInfo.guestEmail} to ${revokeInfo.serverName} has been revoked.`,
+        description: `Invitation for ${revokeInfo.guestEmail} to ${revokeInfo.serverName} has been revoked.`,
       });
       // Refresh the list optimistically
-      setGuestDetails((currentDetails) =>
-        currentDetails
-          .map((guest) => ({
-            ...guest,
-            servers: guest.servers.filter(
-              (server) =>
-                !(
-                  server.serverId === revokeInfo.serverId &&
-                  guest.guestId === revokeInfo.guestId
-                )
-            ),
-          }))
-          .filter((guest) => guest.servers.length > 0)
+      setInvitations((currentInvitations) =>
+        currentInvitations.filter(
+          (inv) => inv._id.toString() !== revokeInfo.invitationId
+        )
       );
     }
     setRevokeInfo(null);
   };
 
+  const groupedByEmail = invitations.reduce((acc, inv) => {
+    const email = inv.email;
+    if (!acc[email]) {
+      acc[email] = [];
+    }
+    acc[email].push(inv);
+    return acc;
+  }, {} as Record<string, InvitationWithDetails[]>);
+
+
   return (
     <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-      {guestDetails.map((guest) => (
-        <Card key={guest.guestId}>
+      {Object.entries(groupedByEmail).map(([email, userInvitations]) => (
+        <Card key={email}>
           <CardHeader>
             <div className="flex items-center gap-4">
               <Avatar>
                 <AvatarFallback>
-                  {guest.guestEmail.charAt(0).toUpperCase()}
+                  {email.charAt(0).toUpperCase()}
                 </AvatarFallback>
               </Avatar>
               <div>
                 <CardTitle className="font-headline text-lg">
-                  {guest.guestEmail}
+                  {email}
                 </CardTitle>
                 <CardDescription>
                   Guest User
@@ -111,19 +109,27 @@ export function GuestList({ initialGuestDetails }: {initialGuestDetails: GuestAc
           <CardContent>
             <h4 className="mb-2 font-semibold text-sm">Server Access:</h4>
             <ul className="space-y-2">
-              {guest.servers.map((server) => (
+              {userInvitations.map((inv) => (
                 <li
-                  key={server.serverId}
+                  key={inv._id.toString()}
                   className="flex items-center justify-between text-sm p-2 rounded-md hover:bg-muted/50"
                 >
                   <div className="flex flex-col gap-1">
                      <div className="flex items-center gap-2">
                         <Server className="text-muted-foreground size-4" />
-                        <span>{server.serverName}</span>
+                        <span>{inv.server.name}</span>
                     </div>
-                     <Badge variant={getPermissionBadgeVariant(server.permission)} className="w-fit">
-                        {server.permission}
-                    </Badge>
+                     <div className="flex items-center gap-2">
+                        <Badge variant={getPermissionBadgeVariant(inv.permission)} className="w-fit">
+                            {inv.permission}
+                        </Badge>
+                         {inv.status === 'pending' && (
+                            <Badge variant="outline" className="w-fit">
+                                <Clock className="mr-1 h-3 w-3" />
+                                Pending
+                            </Badge>
+                         )}
+                     </div>
                   </div>
                   <Button
                     variant="ghost"
@@ -131,10 +137,9 @@ export function GuestList({ initialGuestDetails }: {initialGuestDetails: GuestAc
                     className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                     onClick={() =>
                       handleRevokeClick(
-                        server.serverId,
-                        guest.guestId,
-                        guest.guestEmail,
-                        server.serverName
+                        inv._id.toString(),
+                        inv.email,
+                        inv.server.name
                       )
                     }
                   >
@@ -156,11 +161,10 @@ export function GuestList({ initialGuestDetails }: {initialGuestDetails: GuestAc
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will revoke{" "}
-              <span className="font-bold">{revokeInfo?.guestEmail}</span>'s
-              access to the server{" "}
-              <span className="font-bold">{revokeInfo?.serverName}</span>. They
-              will no longer be able to connect to it.
+              This will revoke the invitation for{" "}
+              <span className="font-bold">{revokeInfo?.guestEmail}</span>
+              {' '}to access the server{" "}
+              <span className="font-bold">{revokeInfo?.serverName}</span>. If they have already accepted, their access will be removed.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
