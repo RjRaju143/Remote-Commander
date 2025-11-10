@@ -1,6 +1,5 @@
 
 
-
 "use client";
 
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -166,6 +165,27 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
     router.push(`/dashboard/server/${serverId}`);
   };
 
+  const handleAddServerOpenChange = useCallback((isOpen: boolean) => {
+    setAddDialogOpen(isOpen);
+    if (!isOpen) {
+      fetchServersAndUser();
+    }
+  }, [fetchServersAndUser]);
+
+  const handleEditServerOpenChange = useCallback((isOpen: boolean) => {
+    if (!isOpen) {
+      setEditingServer(null);
+      fetchServersAndUser();
+    }
+  }, [fetchServersAndUser]);
+  
+  const handleShareServerOpenChange = useCallback((isOpen: boolean) => {
+    if (!isOpen) {
+      setSharingServer(null);
+      fetchServersAndUser();
+    }
+  }, [fetchServersAndUser]);
+
   return (
     <section>
       {!showOnlyFavorites && (
@@ -173,10 +193,7 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
             <h2 className="text-2xl font-semibold font-headline">Your Servers</h2>
             <AddServerDialog 
             open={isAddDialogOpen} 
-            onOpenChange={(isOpen) => {
-                setAddDialogOpen(isOpen);
-                if (!isOpen) fetchServersAndUser();
-            }}
+            onOpenChange={handleAddServerOpenChange}
             >
             <Button>
                 <PlusCircle />
@@ -326,12 +343,7 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
           server={editingServer}
           currentUser={currentUser}
           open={!!editingServer}
-          onOpenChange={(isOpen) => {
-            if (!isOpen) {
-              setEditingServer(null);
-              fetchServersAndUser();
-            }
-          }}
+          onOpenChange={handleEditServerOpenChange}
         />
       )}
 
@@ -339,12 +351,7 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
         <ShareDialog
             server={sharingServer}
             open={!!sharingServer}
-            onOpenChange={(isOpen) => {
-                if (!isOpen) {
-                    setSharingServer(null);
-                    fetchServersAndUser();
-                }
-            }}
+            onOpenChange={handleShareServerOpenChange}
         />
        )}
       
