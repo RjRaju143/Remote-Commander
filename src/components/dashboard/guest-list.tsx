@@ -123,7 +123,7 @@ export function GuestList({ initialInvitations }: {initialInvitations: Invitatio
             </TableHeader>
             <TableBody>
               {invitations.map((inv) => (
-                <TableRow key={inv._id.toString()}>
+                <TableRow key={inv._id}>
                   <TableCell>
                     <div className="flex items-center gap-3">
                       <Avatar className="size-8">

@@ -11,7 +11,9 @@ import { Users } from "lucide-react";
 import { GuestList } from "@/components/dashboard/guest-list";
 
 export default async function GuestsPage() {
-  const invitations = await getSentInvitations();
+  const rawInvitations = await getSentInvitations();
+  // Properly serialize the data before passing it to the client component
+  const invitations = JSON.parse(JSON.stringify(rawInvitations));
 
   return (
     <div className="space-y-8">
