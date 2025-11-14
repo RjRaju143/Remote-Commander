@@ -3,13 +3,14 @@
 
 import { useEffect, useState, useTransition, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { handleInvitation, getCurrentUser } from '@/lib/actions';
+import { handleInvitation } from '@/lib/actions';
 import { getInvitationByToken } from '@/lib/invitations';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Loader2, MailWarning, Check, X, User } from 'lucide-react';
 import Link from 'next/link';
 import type { InvitationWithDetails } from '@/lib/invitations';
+import { getCurrentUser } from '@/lib/actions';
 
 type Status = 'loading' | 'valid' | 'invalid' | 'error' | 'not_logged_in' | 'wrong_user' | 'processing';
 
@@ -39,7 +40,7 @@ function InvitationComponent() {
                     setStatus('not_logged_in');
                     return;
                 }
-                setCurrentUserEmail(user.email);
+                setCurrentUserEmail(user.email!);
                 
                 const inv = await getInvitationByToken(token as string);
                 if (!inv) {
