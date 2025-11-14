@@ -1255,3 +1255,56 @@ export async function getCurrentUser(): Promise<User | null> {
         return null;
     }
 }
+
+
+export async function leaveSharedServer(serverId: string) {
+    const guestUser = await getCurrentUser();
+    if (!guestUser) {
+        return { error: "You must be logged in." };
+    }
+
+    if (!ObjectId.isValid(serverId)) {
+        return { error: "Invalid server ID." };
+    }
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        const serverObjectId = new ObjectId(serverId);
+        const guestUserObjectId = new ObjectId(guestUser._id);
+
+        const invitation = await db.collection('invitations').findOne({
+            serverId: serverObjectId,
+            recipientId: guestUserObjectId,
+            status: 'accepted'
+        });
+
+        if (!invitation) {
+            return { error: "You do not have guest access to this server, or the invitation was not found." };
+        }
+        
+        const server = await db.collection('servers').findOne({ _id: serverObjectId });
+        if (!server) {
+            return { error: "The associated server could not be found." };
+        }
+
+        const result = await db.collection('invitations').deleteOne({ _id: invitation._id });
+
+        if (result.deletedCount === 0) {
+            return { error: "Failed to remove your access. Please try again." };
+        }
+        
+        // Notify the owner
+        await createNotification(
+            invitation.ownerId.toString(),
+            `Guest ${guestUser.email} has removed their own access from your server: "${server.name}".`,
+            'server_shared'
+        );
+
+        revalidatePath('/dashboard');
+        return { success: true, notification: true };
+    } catch (error) {
+        console.error("Failed to leave server:", error);
+        return { error: "An unexpected error occurred." };
+    }
+}
