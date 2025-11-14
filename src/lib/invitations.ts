@@ -21,6 +21,7 @@ const InvitationSchema = z.object({
   token: z.string(),
   status: z.enum(['pending', 'accepted', 'declined', 'revoked']),
   expiresAt: z.date(),
+  createdAt: z.date(),
   recipientId: z.instanceof(ObjectId).optional(),
 });
 
@@ -37,7 +38,7 @@ const InviteUserSchema = z.object({
     serverId: z.string().refine(id => ObjectId.isValid(id)),
     serverName: z.string(),
     email: z.string().email(),
-    permission: z.enum(['read', 'execute', 'admin', 'none']),
+    permission: z.enum([Permission.READ, Permission.EXECUTE]),
 });
 
 export async function inviteUserToServer(prevState: any, formData: FormData) {
@@ -52,10 +53,7 @@ export async function inviteUserToServer(prevState: any, formData: FormData) {
     }
 
     const { serverId, serverName, email, permission } = validated.data;
-    if (permission === Permission.ADMIN) {
-        return { error: "Cannot grant Admin permission through an invitation." };
-    }
-
+    
     const server = await clientPromise.then(c => c.db().collection('servers').findOne({ _id: new ObjectId(serverId) })) as Server | null;
     if (!server) return { error: "Server not found." };
     
@@ -91,6 +89,7 @@ export async function inviteUserToServer(prevState: any, formData: FormData) {
         token,
         status: 'pending',
         expiresAt,
+        createdAt: new Date(),
     };
 
     const validatedInvitation = InvitationSchema.safeParse(invitation);
@@ -171,7 +170,7 @@ export async function getSentInvitations() {
     const db = (await clientPromise).db();
     const invitations = await db.collection('invitations').aggregate([
         { $match: { ownerId: new ObjectId(user._id) } },
-        { $sort: { expiresAt: -1 } },
+        { $sort: { createdAt: -1 } },
         {
             $lookup: {
                 from: 'servers',
@@ -186,7 +185,7 @@ export async function getSentInvitations() {
                 email: 1,
                 permission: 1,
                 status: 1,
-                expiresAt: 1,
+                createdAt: 1,
                 'server.name': '$serverInfo.name'
             }
         }
@@ -202,7 +201,7 @@ export async function getReceivedInvitations() {
     const db = (await clientPromise).db();
     const invitations = await db.collection('invitations').aggregate([
         { $match: { email: user.email, status: 'pending', expiresAt: { $gt: new Date() } } },
-        { $sort: { expiresAt: -1 } },
+        { $sort: { createdAt: -1 } },
         {
             $lookup: {
                 from: 'servers',
@@ -250,18 +249,27 @@ export async function revokeInvitation(invitationId: string) {
     if (!ObjectId.isValid(invitationId)) return { error: "Invalid ID" };
 
     const db = (await clientPromise).db();
-    const result = await db.collection('invitations').deleteOne({
-        _id: new ObjectId(invitationId),
-        ownerId: new ObjectId(user._id) // Ensure only owner can revoke
-    });
+    
+    const invitation = await db.collection('invitations').findOne({ _id: new ObjectId(invitationId) });
+    if (!invitation) return { error: "Invitation not found." };
+    if (invitation.ownerId.toString() !== user._id) return { error: "You do not have permission to revoke this invitation." };
 
-    if (result.deletedCount === 0) {
-        return { error: "Invitation not found or you do not have permission to revoke it." };
+    const result = await db.collection('invitations').updateOne(
+      { _id: new ObjectId(invitationId) },
+      { $set: { status: 'revoked' } }
+    );
+
+    if (result.modifiedCount === 0) {
+        return { error: "Failed to revoke the invitation." };
+    }
+
+    // Notify the guest if they had already accepted
+    if (invitation.status === 'accepted' && invitation.recipientId) {
+        const server = await db.collection('servers').findOne({ _id: invitation.serverId });
+        await createNotification(invitation.recipientId.toString(), `Your access to server "${server?.name}" has been revoked by the owner.`, 'server_shared');
     }
 
     revalidatePath('/dashboard/guests');
-    revalidatePath('/dashboard');
-    
     return { success: true };
 }
 
@@ -283,4 +291,56 @@ export async function getInvitationByToken(token: string): Promise<any | null> {
     plainInvite.server = { name: server.name };
     plainInvite.owner = { email: owner.email };
     return plainInvite;
+}
+
+
+const UpdatePermissionSchema = z.object({
+    invitationId: z.string().refine(id => ObjectId.isValid(id)),
+    permission: z.enum([Permission.READ, Permission.EXECUTE]),
+});
+
+export async function updateInvitationPermission(prevState: any, formData: FormData) {
+    const owner = await getCurrentUser();
+    if (!owner) return { error: "You must be logged in." };
+
+    const rawFormData = Object.fromEntries(formData.entries());
+    const validated = UpdatePermissionSchema.safeParse(rawFormData);
+
+    if (!validated.success) {
+        return { error: "Invalid data provided." };
+    }
+
+    const { invitationId, permission } = validated.data;
+    const db = (await clientPromise).db();
+
+    const invitation = await db.collection('invitations').findOne({
+        _id: new ObjectId(invitationId),
+        ownerId: new ObjectId(owner._id)
+    });
+
+    if (!invitation) {
+        return { error: "Invitation not found or you don't have permission to edit it." };
+    }
+
+    const result = await db.collection('invitations').updateOne(
+        { _id: new ObjectId(invitationId) },
+        { $set: { permission: permission } }
+    );
+    
+    if (result.modifiedCount === 0) {
+        return { error: "Failed to update permission. The permission might be the same as before." };
+    }
+
+    // Notify the guest user if they have already accepted the invitation
+    if (invitation.recipientId && invitation.status === 'accepted') {
+        const server = await db.collection('servers').findOne({ _id: invitation.serverId });
+        await createNotification(
+            invitation.recipientId.toString(),
+            `Your permission for server "${server?.name}" has been updated to "${permission}" by the owner.`,
+            'server_shared'
+        );
+    }
+    
+    revalidatePath('/dashboard/guests');
+    return { success: true };
 }
