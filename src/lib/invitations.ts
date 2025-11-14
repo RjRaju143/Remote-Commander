@@ -1,11 +1,12 @@
 
+
 'use server';
 
 import { z } from 'zod';
 import { ObjectId } from 'mongodb';
 import { randomBytes } from 'crypto';
 import clientPromise from './mongodb';
-import { getCurrentUser, createNotification } from './actions';
+import { createNotification, getCurrentUser } from './actions';
 import nodemailer from 'nodemailer';
 import { decrypt } from './server-helpers';
 import { revalidatePath } from 'next/cache';
@@ -182,6 +183,7 @@ export async function getSentInvitations() {
         { $unwind: '$serverInfo' },
         {
             $project: {
+                _id: 1,
                 email: 1,
                 permission: 1,
                 status: 1,
