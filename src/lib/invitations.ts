@@ -1,5 +1,4 @@
 
-
 'use server';
 
 import { z } from 'zod';
@@ -187,13 +186,13 @@ export async function getSentInvitations() {
                 email: 1,
                 permission: 1,
                 status: 1,
-                createdAt: 1,
+                createdAt: 1, // <<< THIS WAS THE MISSING PIECE
                 'server.name': '$serverInfo.name'
             }
         }
     ]).toArray();
     
-    return JSON.parse(JSON.stringify(invitations));
+    return invitations;
 }
 
 export async function getReceivedInvitations() {
