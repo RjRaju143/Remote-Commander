@@ -1,5 +1,13 @@
 
-import { Permission } from "./auth";
+export enum Permission {
+  NONE = 'none',
+  READ = 'read',
+  EXECUTE = 'execute',
+  ADMIN = 'admin',
+}
+
+export type PermissionLevel = Permission.READ | Permission.EXECUTE | Permission.ADMIN;
+
 
 export type ServerOwner = {
   _id: string;

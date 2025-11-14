@@ -18,8 +18,9 @@ import { NotificationModel, NotificationSchema, NotificationType } from "@/model
 import { decrypt, encrypt, getServerById as getServerByIdHelper } from "./server-helpers";
 import { verifyJwt } from "./jwt";
 import { getServerMetricsCommand } from "@/ai/flows/get-server-metrics";
-import { canUser, isUserAdmin, Permission, PermissionLevel, getUserPermission } from "./auth";
-import { getInvitationsForUser, getInvitationByToken, inviteUserToServer } from "./invitations";
+import { canUser, isUserAdmin, getUserPermission } from "./auth";
+import { getInvitationsForUser, getInvitationByToken } from "./invitations";
+import { Permission } from "./types";
 
 export interface GenerateCommandState {
   result?: any;

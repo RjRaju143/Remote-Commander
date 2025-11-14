@@ -5,20 +5,19 @@ import { z } from 'zod';
 import { ObjectId } from 'mongodb';
 import { randomBytes } from 'crypto';
 import clientPromise from './mongodb';
-import { canUser, isUserAdmin, Permission, PermissionLevel } from './auth';
-import { getCurrentUser } from './actions';
+import { getCurrentUser, createNotification } from './actions';
 import nodemailer from 'nodemailer';
 import { decrypt } from './server-helpers';
 import { revalidatePath } from 'next/cache';
-import { createNotification } from './actions';
 import type { Server } from './types';
+import { Permission } from './types';
 
 
 const InvitationSchema = z.object({
   serverId: z.instanceof(ObjectId),
   ownerId: z.instanceof(ObjectId),
   email: z.string().email(),
-  permission: z.nativeEnum(Permission),
+  permission: z.enum([Permission.READ, Permission.EXECUTE, Permission.ADMIN, Permission.NONE]),
   token: z.string(),
   status: z.enum(['pending', 'accepted', 'declined', 'revoked']),
   expiresAt: z.date(),
@@ -38,14 +37,16 @@ const InviteUserSchema = z.object({
     serverId: z.string().refine(id => ObjectId.isValid(id)),
     serverName: z.string(),
     email: z.string().email(),
-    permission: z.nativeEnum(Permission),
+    permission: z.enum(['read', 'execute', 'admin', 'none']),
 });
 
 export async function inviteUserToServer(prevState: any, formData: FormData) {
     const owner = await getCurrentUser();
     if (!owner) return { error: "You must be logged in." };
 
-    const validated = InviteUserSchema.safeParse(Object.fromEntries(formData.entries()));
+    const rawFormData = Object.fromEntries(formData.entries());
+    
+    const validated = InviteUserSchema.safeParse(rawFormData);
     if (!validated.success) {
         return { error: "Invalid data provided." };
     }
@@ -82,7 +83,7 @@ export async function inviteUserToServer(prevState: any, formData: FormData) {
     const token = randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
-    const invitation: Invitation = {
+    const invitation: Omit<Invitation, 'status'> & { status: 'pending' } = {
         serverId: new ObjectId(serverId),
         ownerId: new ObjectId(owner._id),
         email,

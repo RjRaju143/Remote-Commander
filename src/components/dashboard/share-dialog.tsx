@@ -18,7 +18,7 @@ import type { Server } from "@/lib/types";
 import { inviteUserToServer } from "@/lib/invitations";
 import { Loader2, Send } from "lucide-react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Permission } from "@/lib/auth";
+import { Permission } from "@/lib/types";
 
 type ShareDialogProps = {
   server: Server;

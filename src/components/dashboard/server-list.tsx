@@ -1,5 +1,6 @@
 
 
+
 'use client';
 
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,7 +35,8 @@ import { ShareDialog } from "./share-dialog";
 import type { User as CurrentUser } from "@/models/User";
 import { cn } from "@/lib/utils";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
-import { canUser, Permission } from "@/lib/auth";
+import { canUser } from "@/lib/auth";
+import { Permission } from "@/lib/types";
 
 
 type ServerWithHealth = Server & { 

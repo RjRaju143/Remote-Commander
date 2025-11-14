@@ -3,6 +3,7 @@
 
 
 
+
 'use client';
 
 import { getServerById, testServerConnection, getCurrentUser } from '@/lib/actions';
@@ -19,8 +20,9 @@ import { CommandClassifier } from '@/components/dashboard/command-classifier';
 import { Separator } from '@/components/ui/separator';
 import { ServerMetrics } from '@/components/dashboard/server-metrics';
 import { cn } from '@/lib/utils';
-import { canUser, Permission } from '@/lib/auth';
+import { canUser } from '@/lib/auth';
 import type { User } from '@/models/User';
+import { Permission } from '@/lib/types';
 
 
 type ConnectionStatus = 'connecting' | 'connected' | 'error';

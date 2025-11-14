@@ -2,24 +2,14 @@
 import type { User } from "@/models/User";
 import type { Server } from "./types";
 import { getInvitationsForUser } from "./invitations";
-import { ObjectId } from "mongodb";
-import { verifyJwt } from "./jwt";
-import clientPromise from "./mongodb";
+import { Permission } from "./types";
+
 
 export enum Role {
     USER = 'user',
     ADMIN = 'admin',
     MODERATOR = 'moderator',
 }
-
-export enum Permission {
-    NONE = 'none',
-    READ = 'read',
-    EXECUTE = 'execute',
-    ADMIN = 'admin',
-}
-
-export type PermissionLevel = Permission.READ | Permission.EXECUTE | Permission.ADMIN;
 
 const permissionHierarchy: Record<Permission, number> = {
     [Permission.NONE]: 0,
