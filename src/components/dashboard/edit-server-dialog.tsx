@@ -33,8 +33,10 @@ export function EditServerDialog({ server, open, onOpenChange, currentUser }: Ed
   const [isDownloading, setIsDownloading] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
   const [state, formAction, pending] = useActionState(updateServer, undefined);
-
   const onOpenChangeRef = useRef(onOpenChange);
+  const prevStateRef = useRef(state);
+
+
   useEffect(() => {
     onOpenChangeRef.current = onOpenChange;
   });
@@ -46,19 +48,22 @@ export function EditServerDialog({ server, open, onOpenChange, currentUser }: Ed
   }, [server, currentUser]);
   
   useEffect(() => {
-    if (state?.error) {
-      toast({
-        variant: "destructive",
-        title: "Error updating server",
-        description: state.error,
-      });
-    }
-    if (state?.success) {
-      toast({
-        title: "Server Updated",
-        description: `Server has been updated successfully.`,
-      });
-      onOpenChangeRef.current(false);
+    if (state !== prevStateRef.current) {
+        if (state?.error) {
+          toast({
+            variant: "destructive",
+            title: "Error updating server",
+            description: state.error,
+          });
+        }
+        if (state?.success) {
+          toast({
+            title: "Server Updated",
+            description: `Server has been updated successfully.`,
+          });
+          onOpenChangeRef.current(false);
+        }
+        prevStateRef.current = state;
     }
   }, [state, toast]);
 

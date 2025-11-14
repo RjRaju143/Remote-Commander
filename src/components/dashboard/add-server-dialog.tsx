@@ -29,33 +29,37 @@ type AddServerDialogProps = {
 export function AddServerDialog({ children, open, onOpenChange }: AddServerDialogProps) {
   const { toast, notify } = useToast();
   const [state, formAction, pending] = useActionState(addServer, undefined);
-
-  // Use a ref to hold the latest onOpenChange function without causing re-renders
   const onOpenChangeRef = useRef(onOpenChange);
+  const prevStateRef = useRef(state);
+
+
   useEffect(() => {
     onOpenChangeRef.current = onOpenChange;
   });
 
   useEffect(() => {
-    if (state?.error) {
-      toast({
-        variant: "destructive",
-        title: "Error adding server",
-        description: state.error,
-      });
-    }
-    if (state?.success) {
-      toast({
-        title: "Server Added",
-        description: "A new server has been added successfully.",
-      });
-      if (state.notification) {
-          notify();
-      }
-      onOpenChangeRef.current(false);
-      // Manually reset form by targeting form with an ID
-      const form = document.getElementById('addServerForm') as HTMLFormElement;
-      form?.reset();
+     // Only trigger effects if the state has genuinely changed
+    if (state !== prevStateRef.current) {
+        if (state?.error) {
+          toast({
+            variant: "destructive",
+            title: "Error adding server",
+            description: state.error,
+          });
+        }
+        if (state?.success) {
+          toast({
+            title: "Server Added",
+            description: "A new server has been added successfully.",
+          });
+          if (state.notification) {
+              notify();
+          }
+          onOpenChangeRef.current(false);
+          const form = document.getElementById('addServerForm') as HTMLFormElement;
+          form?.reset();
+        }
+        prevStateRef.current = state;
     }
   }, [state, toast, notify]);
 

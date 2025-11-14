@@ -29,28 +29,30 @@ type ShareDialogProps = {
 export function ShareDialog({ server, open, onOpenChange }: ShareDialogProps) {
   const { toast, notify } = useToast();
   const [state, formAction, pending] = useActionState(inviteUserToServer, undefined);
-
   const onOpenChangeRef = useRef(onOpenChange);
+  const prevStateRef = useRef(state);
+
   useEffect(() => {
     onOpenChangeRef.current = onOpenChange;
   });
 
    useEffect(() => {
-    if (!state) return; // Initial state is undefined
-
-    if (state.error) {
-        toast({
-            variant: "destructive",
-            title: "Error Sending Invitation",
-            description: state.error,
-        });
-    }
-    if (state.success) {
-        toast({
-            title: "Invitation Sent",
-            description: state.message,
-        });
-        onOpenChangeRef.current(false);
+    if (state !== prevStateRef.current) {
+        if (state?.error) {
+            toast({
+                variant: "destructive",
+                title: "Error Sending Invitation",
+                description: state.error,
+            });
+        }
+        if (state?.success) {
+            toast({
+                title: "Invitation Sent",
+                description: state.message,
+            });
+            onOpenChangeRef.current(false);
+        }
+        prevStateRef.current = state;
     }
    }, [state, toast]);
 
