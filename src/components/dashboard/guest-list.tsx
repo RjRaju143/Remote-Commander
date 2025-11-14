@@ -5,13 +5,20 @@ import { useState } from "react";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Server, Trash2, Clock } from "lucide-react";
+import { Trash2, Clock } from "lucide-react";
 import { revokeInvitation } from "@/lib/invitations";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -75,83 +82,77 @@ export function GuestList({ initialInvitations }: {initialInvitations: Invitatio
     setRevokeInfo(null);
   };
 
-  const groupedByEmail = invitations.reduce((acc, inv) => {
-    const email = inv.email;
-    if (!acc[email]) {
-      acc[email] = [];
-    }
-    acc[email].push(inv);
-    return acc;
-  }, {} as Record<string, InvitationWithDetails[]>);
-
 
   return (
-    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-      {Object.entries(groupedByEmail).map(([email, userInvitations]) => (
-        <Card key={email}>
-          <CardHeader>
-            <div className="flex items-center gap-4">
-              <Avatar>
-                <AvatarFallback>
-                  {email.charAt(0).toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              <div>
-                <CardTitle className="font-headline text-lg">
-                  {email}
-                </CardTitle>
-                <CardDescription>
-                  Guest User
-                </CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <h4 className="mb-2 font-semibold text-sm">Server Access:</h4>
-            <ul className="space-y-2">
-              {userInvitations.map((inv) => (
-                <li
-                  key={inv._id.toString()}
-                  className="flex items-center justify-between text-sm p-2 rounded-md hover:bg-muted/50"
-                >
-                  <div className="flex flex-col gap-1">
-                     <div className="flex items-center gap-2">
-                        <Server className="text-muted-foreground size-4" />
-                        <span>{inv.server.name}</span>
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>Sent Invitations</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Guest</TableHead>
+                <TableHead>Server</TableHead>
+                <TableHead>Permission</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Invited</TableHead>
+                <TableHead className="text-right">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {invitations.map((inv) => (
+                <TableRow key={inv._id.toString()}>
+                  <TableCell>
+                    <div className="flex items-center gap-3">
+                      <Avatar className="size-8">
+                        <AvatarFallback>{inv.email.charAt(0).toUpperCase()}</AvatarFallback>
+                      </Avatar>
+                      <span className="font-medium">{inv.email}</span>
                     </div>
-                     <div className="flex items-center gap-2">
-                        <Badge variant={getPermissionBadgeVariant(inv.permission)} className="w-fit">
-                            {inv.permission}
-                        </Badge>
-                         {inv.status === 'pending' && (
-                            <Badge variant="outline" className="w-fit">
-                                <Clock className="mr-1 h-3 w-3" />
-                                Pending
-                            </Badge>
-                         )}
-                     </div>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() =>
-                      handleRevokeClick(
-                        inv._id.toString(),
-                        inv.email,
-                        inv.server.name
-                      )
-                    }
-                  >
-                    <Trash2 className="mr-2" />
-                    Revoke
-                  </Button>
-                </li>
+                  </TableCell>
+                  <TableCell>{inv.server.name}</TableCell>
+                  <TableCell>
+                    <Badge variant={getPermissionBadgeVariant(inv.permission)}>{inv.permission}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    {inv.status === 'pending' ? (
+                       <Badge variant="outline" className="w-fit">
+                          <Clock className="mr-1 h-3 w-3" />
+                          Pending
+                       </Badge>
+                    ) : (
+                       <Badge variant="secondary">{inv.status.charAt(0).toUpperCase() + inv.status.slice(1)}</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {formatDistanceToNow(new Date(inv.expiresAt), { addSuffix: true })}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => handleRevokeClick(inv._id.toString(), inv.email, inv.server.name)}
+                    >
+                      <Trash2 className="size-4" />
+                      <span className="sr-only">Revoke</span>
+                    </Button>
+                  </TableCell>
+                </TableRow>
               ))}
-            </ul>
-          </CardContent>
-        </Card>
-      ))}
+               {invitations.length === 0 && (
+                <TableRow>
+                    <TableCell colSpan={6} className="text-center h-24 text-muted-foreground">
+                        No guests have been invited yet.
+                    </TableCell>
+                </TableRow>
+               )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
 
       <AlertDialog
         open={!!revokeInfo}
@@ -178,6 +179,6 @@ export function GuestList({ initialInvitations }: {initialInvitations: Invitatio
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </>
   );
 }
