@@ -1,4 +1,3 @@
-
 'use server';
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -21,7 +20,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: 'Server ID is required' }, { status: 400 });
   }
 
-  const serverCreds = await getServerById(serverId, user._id);
+  const serverCreds = await getServerById(serverId);
   if (!serverCreds) {
     return NextResponse.json({ message: 'Server not found or permission denied' }, { status: 404 });
   }

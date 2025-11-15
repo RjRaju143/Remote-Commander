@@ -1,9 +1,3 @@
-
-
-
-
-
-
 'use client';
 
 import { getServerById, testServerConnection, getCurrentUser } from '@/lib/actions';
