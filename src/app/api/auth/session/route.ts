@@ -1,3 +1,4 @@
+
 // src/app/api/auth/session/route.ts
 export const runtime = 'nodejs';
 
@@ -36,6 +37,9 @@ export async function POST(request: NextRequest) {
     const { password, ...userWithoutPassword } = user;
     const plainUser = JSON.parse(JSON.stringify(userWithoutPassword));
     plainUser._id = plainUser._id.toString();
+    if(plainUser.organizationId) {
+      plainUser.organizationId = plainUser.organizationId.toString();
+    }
     plainUser.favorites = plainUser.favorites?.map((id: ObjectId | string) => id.toString()) || [];
     plainUser.roles = plainUser.roles || ['user'];
 

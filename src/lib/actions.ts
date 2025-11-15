@@ -18,6 +18,7 @@ import { getServerMetricsCommand } from "@/ai/flows/get-server-metrics";
 import { canUser, isUserAdmin } from "./auth";
 import { Permission } from "./types";
 import type { Server } from "./types";
+import { EmployeeCountRanges, OrganizationSchema, UserRolesInOrg } from "@/models/Organization";
 
 
 export interface GenerateCommandState {
@@ -177,10 +178,70 @@ export async function handleRegister(
       path: '/',
     });
 
-    return { success: true };
+    redirect('/organization');
   } catch (error) {
     console.error(error);
     return { error: "Something went wrong." };
+  }
+}
+
+const OrgSetupSchema = z.object({
+  name: z.string().min(1, "Organization name is required."),
+  employeeCount: z.enum(EmployeeCountRanges, { required_error: "Please select an employee range." }),
+  userRole: z.enum(UserRolesInOrg, { required_error: "Please select your role." }),
+});
+
+export async function handleCreateOrganization(
+  prevState: AuthState | undefined,
+  formData: FormData
+): Promise<AuthState> {
+  const user = await getCurrentUser();
+  if (!user) {
+    return { error: "You must be logged in to create an organization." };
+  }
+  if (user.organizationId) {
+    return { error: "You already belong to an organization." };
+  }
+
+  const validatedFields = OrgSetupSchema.safeParse(Object.fromEntries(formData.entries()));
+
+  if (!validatedFields.success) {
+    return { error: validatedFields.error.errors[0]?.message || "Invalid data." };
+  }
+  
+  const { name, employeeCount, userRole } = validatedFields.data;
+
+  try {
+    const client = await clientPromise;
+    const db = client.db();
+
+    const orgToInsert = {
+      name,
+      employeeCount,
+      userRole,
+      ownerId: new ObjectId(user._id),
+      createdAt: new Date(),
+    };
+    
+    const validatedOrg = OrganizationSchema.safeParse(orgToInsert);
+    if (!validatedOrg.success) {
+      console.error("Org Validation Error:", validatedOrg.error);
+      return { error: "Internal error creating organization." };
+    }
+
+    const result = await db.collection("organizations").insertOne(validatedOrg.data);
+    const orgId = result.insertedId;
+
+    await db.collection("users").updateOne(
+      { _id: new ObjectId(user._id) },
+      { $set: { organizationId: orgId } }
+    );
+    
+    revalidatePath('/dashboard');
+    return { success: true };
+  } catch (error) {
+    console.error("Failed to create organization:", error);
+    return { error: "Could not save organization to the database." };
   }
 }
 
