@@ -186,7 +186,7 @@ export async function getSentInvitations() {
                 email: 1,
                 permission: 1,
                 status: 1,
-                createdAt: 1, // <<< THIS WAS THE MISSING PIECE
+                createdAt: 1,
                 'server.name': '$serverInfo.name'
             }
         }
