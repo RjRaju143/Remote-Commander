@@ -9,14 +9,12 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import type { User } from "@/models/User";
 import { ObjectId } from "mongodb";
-import type { Server } from "./types";
 import { Client } from 'ssh2';
 import nodemailer from 'nodemailer';
 import { NotificationModel, NotificationSchema, NotificationType } from "@/models/Notification";
 import { decrypt, encrypt, getServerById } from "./server-helpers";
 import { getServerMetricsCommand } from "@/ai/flows/get-server-metrics";
-import { canUser, isUserAdmin, getUserPermission } from "./auth";
-import { getInvitationByToken } from "./invitations";
+import { canUser, isUserAdmin } from "./auth";
 import { Permission } from "./types";
 
 export interface GenerateCommandState {
@@ -708,7 +706,7 @@ export async function getUserForProfile(): Promise<User | null> {
 // Notification Actions
 
 export async function createNotification(
-    userId: string,
+    userId: string | ObjectId,
     message: string,
     type: NotificationType,
     link?: string
@@ -841,7 +839,7 @@ export async function getServerMetrics(serverId: string) {
             let output = '';
 
             conn.on('ready', () => {
-                conn.exec(command, (err, stream) => {
+                conn.exec(command, (err:any, stream:any) => {
                     if (err) {
                         conn.end();
                         return resolve({ error: `Execution error: ${err.message}` });
@@ -1094,7 +1092,7 @@ export async function leaveSharedServer(serverId: string) {
         // Remove guest from server's guestIds array
         const updateResult = await db.collection('servers').updateOne(
             { _id: serverObjectId },
-            { $pull: { guestIds: guestUserObjectId } }
+            { $pull: { guestIds: guestUser._id } }
         );
 
         if (updateResult.modifiedCount === 0) {
