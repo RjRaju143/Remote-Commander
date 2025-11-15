@@ -53,8 +53,15 @@ export async function inviteUserToServer(prevState: any, formData: FormData) {
     }
 
     const { serverId, serverName, email, permission } = validated.data;
+    const db = (await clientPromise).db();
+
+    // 1. Check if user exists
+    const guestUser = await db.collection('users').findOne({ email });
+    if (!guestUser) {
+        return { error: `User with email "${email}" not found.` };
+    }
     
-    const server = await clientPromise.then(c => c.db().collection('servers').findOne({ _id: new ObjectId(serverId) })) as Server | null;
+    const server = await db.collection('servers').findOne({ _id: new ObjectId(serverId) }) as Server | null;
     if (!server) return { error: "Server not found." };
     
     if (server.ownerId.toString() !== owner._id) {
@@ -65,8 +72,6 @@ export async function inviteUserToServer(prevState: any, formData: FormData) {
         return { error: "You cannot invite yourself." };
     }
     
-    const db = (await clientPromise).db();
-
     // Check if there's already a pending or accepted invitation for this user and server
     const existingInvitation = await db.collection('invitations').findOne({
         serverId: new ObjectId(serverId),
