@@ -5,43 +5,6 @@ import type { Server } from "./types";
 import { isUserAdmin } from "./auth";
 import { getCurrentUser } from "./actions";
 
-
-export async function getServerById(serverId: string): Promise<Server | null> {
-  const user = await getCurrentUser();
-  if (!user) return null;
-  
-  if (!ObjectId.isValid(serverId)) return null;
-
-  const serverObjectId = new ObjectId(serverId);
-  const userObjectId = new ObjectId(user._id);
-
-  try {
-    const client = await clientPromise;
-    const db = client.db();
-    
-    const userIsAdmin = (user.roles as string[])?.includes('admin');
-
-    const server = await db.collection('servers').findOne({ _id: serverObjectId });
-    if (!server) return null;
-
-    // Now check permissions
-    const isOwner = server.ownerId.equals(userObjectId);
-    const isGuest = server.guestIds?.some((guestId: ObjectId) => guestId.equals(userObjectId));
-    
-    if (!userIsAdmin && !isOwner && !isGuest) {
-      return null; // No access
-    }
-
-    const serverDoc = server as any;
-    const serverData = JSON.parse(JSON.stringify(serverDoc));
-    return { ...serverData, id: serverData._id.toString() };
-
-  } catch (error) {
-    console.error("Failed to fetch server:", error);
-    return null;
-  }
-}
-
 // Encryption/Decryption functions
 export function encrypt(text: string): string {
   const secret = process.env.ENCRYPTION_SECRET;
