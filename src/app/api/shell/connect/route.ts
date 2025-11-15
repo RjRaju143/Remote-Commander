@@ -5,7 +5,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/actions';
 import { getServerById, decrypt } from '@/lib/server-helpers';
 import { Client } from 'ssh2';
-import { randomUUID } from 'crypto';
 import { addSession, deleteSession } from '@/lib/shell-sessions';
 import { canUser } from '@/lib/auth';
 import { Permission } from '@/lib/types';
@@ -34,7 +33,7 @@ export async function POST(request: NextRequest) {
   }
 
   const client = new Client();
-  const sessionId = randomUUID();
+  const sessionId = crypto.randomUUID();
 
   const connectPromise = new Promise<void>((resolve, reject) => {
     client.on('ready', () => {
@@ -89,3 +88,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: `SSH Connection Error: ${error.message}` }, { status: 500 });
   }
 }
+
+    

@@ -19,7 +19,6 @@ import { getServerMetricsCommand } from "@/ai/flows/get-server-metrics";
 import { canUser, isUserAdmin, getUserPermission } from "./auth";
 import { getInvitationByToken } from "./invitations";
 import { Permission } from "./types";
-import { randomUUID } from "crypto";
 
 export interface GenerateCommandState {
   result?: any;
@@ -43,7 +42,7 @@ const SESSION_DURATION_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
 async function createSession(userId: string) {
   try {
-    const sessionId = randomUUID();
+    const sessionId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + SESSION_DURATION_SECONDS * 1000);
 
     const client = await clientPromise;
@@ -1331,3 +1330,5 @@ export async function leaveSharedServer(serverId: string) {
         return { error: "An unexpected error occurred." };
     }
 }
+
+    
