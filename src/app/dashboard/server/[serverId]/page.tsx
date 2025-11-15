@@ -1,6 +1,8 @@
+
 'use client';
 
-import { getServerById, testServerConnection, getCurrentUser } from '@/lib/actions';
+import { testServerConnection, getCurrentUser } from '@/lib/actions';
+import { getServerById } from '@/lib/server-helpers';
 import { notFound, useRouter, useParams } from 'next/navigation';
 import { ShellClientWrapper } from '@/components/dashboard/shell-client-wrapper';
 import { Button } from '@/components/ui/button';
