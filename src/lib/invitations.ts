@@ -10,7 +10,7 @@ import nodemailer from 'nodemailer';
 import { decrypt } from './server-helpers';
 import { revalidatePath } from 'next/cache';
 import type { Server } from './types';
-import { Permission, PermissionLevel } from './types';
+import { Permission } from './types';
 
 
 const InvitationSchema = z.object({
@@ -240,7 +240,7 @@ export async function getInvitationsForUser(userId: string) {
         recipientId: new ObjectId(userId),
         status: 'accepted'
     }).toArray();
-    return invitations;
+    return JSON.parse(JSON.stringify(invitations));
 }
 
 export async function revokeInvitation(invitationId: string) {
