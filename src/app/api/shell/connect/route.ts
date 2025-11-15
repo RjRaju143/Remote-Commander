@@ -14,7 +14,6 @@ export async function POST(request: NextRequest) {
   if (!user) {
     return NextResponse.json({ message: 'Authentication required' }, { status: 401 });
   }
-  const userId = user._id;
 
   const { serverId, cols, rows } = await request.json();
 
@@ -22,7 +21,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: 'Server ID is required' }, { status: 400 });
   }
 
-  const serverCreds = await getServerById(serverId);
+  const serverCreds = await getServerById(serverId, user._id);
   if (!serverCreds) {
     return NextResponse.json({ message: 'Server not found or permission denied' }, { status: 404 });
   }
@@ -88,5 +87,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: `SSH Connection Error: ${error.message}` }, { status: 500 });
   }
 }
-
-    

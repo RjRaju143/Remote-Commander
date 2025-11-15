@@ -6,7 +6,7 @@ import type { Server } from "./types";
 import { isUserAdmin } from "./auth";
 
 
-export async function getServerById(serverId: string, userId: string | null): Promise<Server | null> {
+export async function getServerById(serverId: string, userId?: string | null): Promise<Server | null> {
   if (!userId) return null;
   
   if (!ObjectId.isValid(serverId) || !ObjectId.isValid(userId)) return null;
