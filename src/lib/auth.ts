@@ -42,6 +42,12 @@ export async function getUserPermission(server: Server, user: User): Promise<Per
         return Permission.ADMIN;
     }
 
+    const isGuest = server.guestIds?.some(guestId => guestId === user._id);
+    if (!isGuest) {
+        return Permission.NONE;
+    }
+
+    // If they are a guest, we need to find out their permission level from the original invitation.
     const invitations = await getInvitationsForUser(user._id);
     const relevantInvitation = invitations.find(inv => inv.serverId.toString() === server.id && inv.status === 'accepted');
 

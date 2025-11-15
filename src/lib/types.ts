@@ -24,6 +24,7 @@ export type Server = {
   status: 'active' | 'inactive' | 'connecting';
   privateKey?: string | undefined;
   ownerId: string;
+  guestIds?: string[];
   owner?: ServerOwner;
   userPermission?: Permission; // Permission of the CURRENT user
 };

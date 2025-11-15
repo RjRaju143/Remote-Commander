@@ -27,18 +27,11 @@ export async function getServerById(serverId: string, userId: string | null): Pr
     if (!server) return null;
 
     // Now check permissions
-    if (userIsAdmin || server.ownerId.equals(userObjectId)) {
-      // Allow access
-    } else {
-      // Check for an accepted invitation
-      const invitation = await db.collection('invitations').findOne({
-        serverId: serverObjectId,
-        recipientId: userObjectId,
-        status: 'accepted'
-      });
-      if (!invitation) {
-        return null; // No access
-      }
+    const isOwner = server.ownerId.equals(userObjectId);
+    const isGuest = server.guestIds?.some((guestId: ObjectId) => guestId.equals(userObjectId));
+    
+    if (!userIsAdmin && !isOwner && !isGuest) {
+      return null; // No access
     }
 
     const serverDoc = server as any;

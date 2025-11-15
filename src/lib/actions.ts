@@ -19,7 +19,7 @@ import { decrypt, encrypt, getServerById as getServerByIdHelper } from "./server
 import { verifyJwt } from "./jwt";
 import { getServerMetricsCommand } from "@/ai/flows/get-server-metrics";
 import { canUser, isUserAdmin, getUserPermission } from "./auth";
-import { getInvitationsForUser, getInvitationByToken } from "./invitations";
+import { getInvitationByToken } from "./invitations";
 import { Permission } from "./types";
 
 export interface GenerateCommandState {
@@ -184,18 +184,12 @@ export async function getServers({ page = 1, limit = 6, noSort = false }: { page
     const userObjectId = new ObjectId(user._id);
     
     const userIsAdmin = isUserAdmin(user);
-
-    // Get server IDs from accepted invitations for the user
-    const invitations = await getInvitationsForUser(user._id);
-    const guestServerIds = invitations
-      .filter(inv => inv.status === 'accepted')
-      .map(inv => inv.serverId);
     
     const matchStage = { 
         $match: userIsAdmin ? {} : { // Admins see all servers
           $or: [
             { ownerId: userObjectId }, 
-            { _id: { $in: guestServerIds } }
+            { guestIds: userObjectId }
           ] 
         } 
       };
@@ -239,6 +233,7 @@ export async function getServers({ page = 1, limit = 6, noSort = false }: { page
         username: 1,
         status: 1,
         ownerId: 1,
+        guestIds: 1,
         owner: {
           _id: '$ownerInfo._id',
           email: '$ownerInfo.email'
@@ -279,12 +274,6 @@ export async function getFavoriteServers({ page = 1, limit = 6 }: { page?: numbe
     const db = client.db();
     const favoriteIds = user.favorites.map(id => new ObjectId(id));
     
-    // Get server IDs from accepted invitations for the user
-    const invitations = await getInvitationsForUser(user._id);
-    const guestServerIds = invitations
-      .filter(inv => inv.status === 'accepted')
-      .map(inv => inv.serverId);
-    
     const userIsAdmin = isUserAdmin(user);
 
     const matchStage = {
@@ -293,7 +282,7 @@ export async function getFavoriteServers({ page = 1, limit = 6 }: { page?: numbe
         ...(userIsAdmin ? {} : { // Admin can see any favorite, others must have permission
              $or: [
               { ownerId: new ObjectId(user._id) },
-              { _id: { $in: guestServerIds } }
+              { guestIds: new ObjectId(user._id) }
             ]
         })
       }
@@ -323,6 +312,7 @@ export async function getFavoriteServers({ page = 1, limit = 6 }: { page?: numbe
           username: 1,
           status: 1,
           ownerId: 1,
+          guestIds: 1,
           owner: {
             _id: '$ownerInfo._id',
             email: '$ownerInfo.email'
@@ -366,7 +356,7 @@ export async function getServerById(serverId: string): Promise<Server | null> {
 }
 
 
-const AddServerSchema = ServerSchema.omit({ ownerId: true });
+const AddServerSchema = ServerSchema.omit({ ownerId: true, guestIds: true });
 
 export async function addServer(
   prevState: AuthState | undefined,
@@ -392,6 +382,7 @@ export async function addServer(
     const serverToInsert: Record<string, any> = {
       ...serverDetails,
       ownerId: new ObjectId(user._id),
+      guestIds: [],
       status: 'inactive'
     };
 
@@ -1211,6 +1202,12 @@ export async function handleInvitation(token: string, action: 'accept' | 'declin
         { returnDocument: 'after' }
     );
     
+    // Add user to the server's guestIds array
+    await db.collection('servers').updateOne(
+        { _id: invitation.serverId },
+        { $addToSet: { guestIds: new ObjectId(user._id) } }
+    );
+    
     if (result) {
         await createNotification(invitation.ownerId.toString(), `${user.email} has accepted your invitation to access a server.`, 'server_shared');
         revalidatePath('/dashboard/guests');
@@ -1272,31 +1269,31 @@ export async function leaveSharedServer(serverId: string) {
         const db = client.db();
         const serverObjectId = new ObjectId(serverId);
         const guestUserObjectId = new ObjectId(guestUser._id);
-
-        const invitation = await db.collection('invitations').findOne({
-            serverId: serverObjectId,
-            recipientId: guestUserObjectId,
-            status: 'accepted'
-        });
-
-        if (!invitation) {
-            return { error: "You do not have guest access to this server, or the invitation was not found." };
-        }
         
         const server = await db.collection('servers').findOne({ _id: serverObjectId });
         if (!server) {
             return { error: "The associated server could not be found." };
         }
+        
+        // Remove guest from server's guestIds array
+        const updateResult = await db.collection('servers').updateOne(
+            { _id: serverObjectId },
+            { $pull: { guestIds: guestUserObjectId } }
+        );
 
-        const result = await db.collection('invitations').deleteOne({ _id: invitation._id });
-
-        if (result.deletedCount === 0) {
-            return { error: "Failed to remove your access. Please try again." };
+        if (updateResult.modifiedCount === 0) {
+            return { error: "Failed to remove your access. You might not have been a guest on this server." };
         }
         
+        // Also update any related invitations to 'revoked' status for clarity
+        await db.collection('invitations').updateMany(
+            { serverId: serverObjectId, recipientId: guestUserObjectId },
+            { $set: { status: 'revoked' } }
+        );
+
         // Notify the owner
         await createNotification(
-            invitation.ownerId.toString(),
+            server.ownerId.toString(),
             `Guest ${guestUser.email} has removed their own access from your server: "${server.name}".`,
             'server_shared'
         );

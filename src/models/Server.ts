@@ -18,6 +18,7 @@ export const ServerSchema = z.object({
   username: z.string().min(1, 'Username is required.'),
   privateKey: z.string().optional(),
   ownerId: z.instanceof(ObjectId).optional(),
+  guestIds: z.array(z.instanceof(ObjectId)).optional(),
 });
 
 export type ServerModel = z.infer<typeof ServerSchema>;
