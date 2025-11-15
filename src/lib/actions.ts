@@ -49,9 +49,13 @@ async function createSession(userId: string) {
     const db = client.db();
     
     // Ensure TTL index exists for automatic expiration
-    await db.collection('sessions').createIndex({ "expiresAt": 1 }, { expireAfterSeconds: 0 });
+    const sessionCollection = db.collection('sessions');
+    const indexes = await sessionCollection.indexes();
+    if (!indexes.some(index => index.key && index.key.expiresAt === 1)) {
+      await sessionCollection.createIndex({ "expiresAt": 1 }, { expireAfterSeconds: 0 });
+    }
 
-    await db.collection('sessions').insertOne({
+    await sessionCollection.insertOne({
       sessionId,
       userId: new ObjectId(userId),
       expiresAt
@@ -693,214 +697,6 @@ export async function handleUpdateProfile(
     }
 }
 
-export async function toggleFavoriteServer(serverId: string) {
-    const user = await getCurrentUser();
-    if (!user) {
-        return { error: 'You must be logged in.' };
-    }
-    if (!ObjectId.isValid(serverId)) {
-        return { error: 'Invalid server ID.' };
-    }
-
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-        const userObjectId = new ObjectId(user._id);
-        const serverObjectId = new ObjectId(serverId);
-
-        const server = await db.collection('servers').findOne({ _id: serverObjectId });
-        if (!server) {
-            return { error: 'Server not found.' };
-        }
-
-        const isFavorite = user.favorites?.some(id => new ObjectId(id).equals(serverObjectId));
-        
-        let updateOperation;
-        if (isFavorite) {
-            // Remove from favorites
-            updateOperation = { $pull: { favorites: serverObjectId } };
-        } else {
-            // Add to favorites
-            updateOperation = { $addToSet: { favorites: serverObjectId } };
-        }
-
-        await db.collection('users').updateOne({ _id: userObjectId }, updateOperation);
-
-        let notification = false;
-        if (!isFavorite) {
-            await createNotification(user._id, `You marked "${server.name}" as a favorite.`, 'server_favorite');
-            notification = true;
-        }
-
-        // Don't revalidate here to prevent re-sorting
-        revalidatePath('/dashboard/favorites');
-        // revalidatePath('/dashboard');
-        return { success: true, notification };
-    } catch (error) {
-        console.error('Failed to toggle favorite:', error);
-        return { error: 'An unexpected error occurred.' };
-    }
-}
-
-const SupportRequestSchema = z.object({
-  message: z.string().min(10, 'Message must be at least 10 characters.'),
-});
-
-function escapeHtml(text: string) {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-export async function handleSupportRequest(
-    prevState: AuthState | undefined,
-    formData: FormData
-): Promise<AuthState> {
-    const user = await getCurrentUser();
-    if (!user || !user.firstName || !user.email) {
-      return { error: 'You must be logged in to send a support request.' };
-    }
-
-    const validatedFields = SupportRequestSchema.safeParse(Object.fromEntries(formData.entries()));
-
-    if (!validatedFields.success) {
-        return { error: validatedFields.error.errors[0]?.message || 'Invalid data.' };
-    }
-
-    const { message } = validatedFields.data;
-    const name = `${user.firstName} ${user.lastName || ''}`.trim();
-    const email = user.email;
-    
-    // Fetch SMTP settings from DB first
-    const dbClient = await clientPromise;
-    const db = dbClient.db();
-    const smtpSettings = await db.collection('settings').findOne({ key: 'smtp' });
-
-    let transporter;
-
-    if (smtpSettings) {
-        transporter = nodemailer.createTransport({
-            host: smtpSettings.host,
-            port: Number(smtpSettings.port),
-            secure: Number(smtpSettings.port) === 465,
-            auth: {
-                user: smtpSettings.user,
-                pass: decrypt(smtpSettings.pass),
-            },
-        });
-    } else {
-        // Fallback to environment variables
-        const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
-
-        if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
-            console.error("SMTP environment variables are not set and no DB config found.");
-            return { error: "The application is not configured to send emails. Please contact an administrator." };
-        }
-        transporter = nodemailer.createTransport({
-            host: SMTP_HOST,
-            port: Number(SMTP_PORT),
-            secure: Number(SMTP_PORT) === 465,
-            auth: { user: SMTP_USER, pass: SMTP_PASS },
-        });
-    }
-    
-    const recipientEmail = smtpSettings?.senderEmail || process.env.SENDER_EMAIL;
-    if (!recipientEmail) {
-        console.error("Recipient email (SENDER_EMAIL) is not configured in DB or .env.");
-        return { error: "The application's recipient email is not configured." };
-    }
-    
-    const senderUser = smtpSettings?.user || process.env.SMTP_USER;
-
-
-    try {
-        await transporter.verify();
-    } catch (error) {
-        console.error("SMTP connection error:", error);
-        return { error: "Could not connect to the email server. Please try again later." };
-    }
-
-    const sanitizedMessage = escapeHtml(message);
-    
-    const emailPlainText = `
-New Support Request from Remote Commander
-=========================================
-
-You've received a new support request with the following details:
-
-Name: ${name}
-Email: ${email}
-
-Message:
-${message}
-
------------------------------------------
-This email was automatically generated by the Remote Commander application.
-`;
-
-    const emailHtml = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>New Support Request</title>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol'; margin: 0; padding: 0; background-color: #f4f4f7; }
-        .container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border: 1px solid #e2e2e7; border-radius: 8px; overflow: hidden; }
-        .header { background-color: hsl(182, 100%, 75%); color: hsl(240, 6%, 10%); padding: 24px; text-align: center; }
-        .header h1 { margin: 0; font-size: 24px; }
-        .content { padding: 24px; color: #333333; }
-        .content h2 { color: hsl(182, 100%, 75%); font-size: 18px; margin-top: 0; }
-        .info-box { background-color: #f8f8fa; border: 1px solid #e2e2e7; border-radius: 4px; padding: 16px; margin-bottom: 24px; }
-        .info-box p { margin: 0 0 8px; }
-        .info-box strong { color: #555555; }
-        .message-box { white-space: pre-wrap; word-wrap: break-word; background-color: #f8f8fa; border: 1px solid #e2e2e7; padding: 16px; border-radius: 4px; font-family: 'Source Code Pro', 'Courier New', Courier, monospace; }
-        .footer { background-color: #f4f4f7; color: #888888; text-align: center; font-size: 12px; padding: 16px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header"><h1>New Support Request</h1></div>
-        <div class="content">
-            <h2>You've received a new message via the Remote Commander support form.</h2>
-            <div class="info-box">
-                <p><strong>From:</strong> ${escapeHtml(name)}</p>
-                <p><strong>Reply-To Email:</strong> <a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a></p>
-            </div>
-            <h2>Message:</h2>
-            <div class="message-box">${sanitizedMessage.replace(/\n/g, '<br>')}</div>
-        </div>
-        <div class="footer">This is an automated message from the Remote Commander application.</div>
-    </div>
-</body>
-</html>
-`;
-
-    try {
-        await transporter.sendMail({
-            from: `"Remote Commander Support" <${senderUser}>`,
-            replyTo: `"${name}" <${email}>`,
-            to: recipientEmail,
-            subject: `New Support Request from ${name}`,
-            text: emailPlainText,
-            html: emailHtml,
-        });
-
-        if (user) {
-          await createNotification(user._id, "Your support request has been sent.", 'support_request');
-        }
-
-        return { success: true, notification: !!user };
-    } catch (error) {
-        console.error("Failed to send support email:", error);
-        return { error: "There was an issue sending your message. Please try again." };
-    }
-}
-
 export async function getUserForProfile(): Promise<User | null> {
     const user = await getCurrentUser();
     if (!user) {
@@ -1331,4 +1127,211 @@ export async function leaveSharedServer(serverId: string) {
     }
 }
 
+export async function toggleFavoriteServer(serverId: string) {
+    const user = await getCurrentUser();
+    if (!user) {
+        return { error: 'You must be logged in.' };
+    }
+    if (!ObjectId.isValid(serverId)) {
+        return { error: 'Invalid server ID.' };
+    }
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        const userObjectId = new ObjectId(user._id);
+        const serverObjectId = new ObjectId(serverId);
+
+        const server = await db.collection('servers').findOne({ _id: serverObjectId });
+        if (!server) {
+            return { error: 'Server not found.' };
+        }
+
+        const isFavorite = user.favorites?.some(id => new ObjectId(id).equals(serverObjectId));
+        
+        let updateOperation;
+        if (isFavorite) {
+            // Remove from favorites
+            updateOperation = { $pull: { favorites: serverObjectId } };
+        } else {
+            // Add to favorites
+            updateOperation = { $addToSet: { favorites: serverObjectId } };
+        }
+
+        await db.collection('users').updateOne({ _id: userObjectId }, updateOperation);
+
+        let notification = false;
+        if (!isFavorite) {
+            await createNotification(user._id, `You marked "${server.name}" as a favorite.`, 'server_favorite');
+            notification = true;
+        }
+
+        // Don't revalidate here to prevent re-sorting
+        revalidatePath('/dashboard/favorites');
+        // revalidatePath('/dashboard');
+        return { success: true, notification };
+    } catch (error) {
+        console.error('Failed to toggle favorite:', error);
+        return { error: 'An unexpected error occurred.' };
+    }
+}
+
+const SupportRequestSchema = z.object({
+  message: z.string().min(10, 'Message must be at least 10 characters.'),
+});
+
+function escapeHtml(text: string) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+export async function handleSupportRequest(
+    prevState: AuthState | undefined,
+    formData: FormData
+): Promise<AuthState> {
+    const user = await getCurrentUser();
+    if (!user || !user.firstName || !user.email) {
+      return { error: 'You must be logged in to send a support request.' };
+    }
+
+    const validatedFields = SupportRequestSchema.safeParse(Object.fromEntries(formData.entries()));
+
+    if (!validatedFields.success) {
+        return { error: validatedFields.error.errors[0]?.message || 'Invalid data.' };
+    }
+
+    const { message } = validatedFields.data;
+    const name = `${user.firstName} ${user.lastName || ''}`.trim();
+    const email = user.email;
+    
+    // Fetch SMTP settings from DB first
+    const dbClient = await clientPromise;
+    const db = dbClient.db();
+    const smtpSettings = await db.collection('settings').findOne({ key: 'smtp' });
+
+    let transporter;
+
+    if (smtpSettings) {
+        transporter = nodemailer.createTransport({
+            host: smtpSettings.host,
+            port: Number(smtpSettings.port),
+            secure: Number(smtpSettings.port) === 465,
+            auth: {
+                user: smtpSettings.user,
+                pass: decrypt(smtpSettings.pass),
+            },
+        });
+    } else {
+        // Fallback to environment variables
+        const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
+
+        if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
+            console.error("SMTP environment variables are not set and no DB config found.");
+            return { error: "The application is not configured to send emails. Please contact an administrator." };
+        }
+        transporter = nodemailer.createTransport({
+            host: SMTP_HOST,
+            port: Number(SMTP_PORT),
+            secure: Number(SMTP_PORT) === 465,
+            auth: { user: SMTP_USER, pass: SMTP_PASS },
+        });
+    }
+    
+    const recipientEmail = smtpSettings?.senderEmail || process.env.SENDER_EMAIL;
+    if (!recipientEmail) {
+        console.error("Recipient email (SENDER_EMAIL) is not configured in DB or .env.");
+        return { error: "The application's recipient email is not configured." };
+    }
+    
+    const senderUser = smtpSettings?.user || process.env.SMTP_USER;
+
+
+    try {
+        await transporter.verify();
+    } catch (error) {
+        console.error("SMTP connection error:", error);
+        return { error: "Could not connect to the email server. Please try again later." };
+    }
+
+    const sanitizedMessage = escapeHtml(message);
+    
+    const emailPlainText = `
+New Support Request from Remote Commander
+=========================================
+
+You've received a new support request with the following details:
+
+Name: ${name}
+Email: ${email}
+
+Message:
+${message}
+
+-----------------------------------------
+This email was automatically generated by the Remote Commander application.
+`;
+
+    const emailHtml = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Support Request</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol'; margin: 0; padding: 0; background-color: #f4f4f7; }
+        .container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border: 1px solid #e2e2e7; border-radius: 8px; overflow: hidden; }
+        .header { background-color: hsl(182, 100%, 75%); color: hsl(240, 6%, 10%); padding: 24px; text-align: center; }
+        .header h1 { margin: 0; font-size: 24px; }
+        .content { padding: 24px; color: #333333; }
+        .content h2 { color: hsl(182, 100%, 75%); font-size: 18px; margin-top: 0; }
+        .info-box { background-color: #f8f8fa; border: 1px solid #e2e2e7; border-radius: 4px; padding: 16px; margin-bottom: 24px; }
+        .info-box p { margin: 0 0 8px; }
+        .info-box strong { color: #555555; }
+        .message-box { white-space: pre-wrap; word-wrap: break-word; background-color: #f8f8fa; border: 1px solid #e2e2e7; padding: 16px; border-radius: 4px; font-family: 'Source Code Pro', 'Courier New', Courier, monospace; }
+        .footer { background-color: #f4f4f7; color: #888888; text-align: center; font-size: 12px; padding: 16px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><h1>New Support Request</h1></div>
+        <div class="content">
+            <h2>You've received a new message via the Remote Commander support form.</h2>
+            <div class="info-box">
+                <p><strong>From:</strong> ${escapeHtml(name)}</p>
+                <p><strong>Reply-To Email:</strong> <a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a></p>
+            </div>
+            <h2>Message:</h2>
+            <div class="message-box">${sanitizedMessage.replace(/\n/g, '<br>')}</div>
+        </div>
+        <div class="footer">This is an automated message from the Remote Commander application.</div>
+    </div>
+</body>
+</html>
+`;
+
+    try {
+        await transporter.sendMail({
+            from: `"Remote Commander Support" <${senderUser}>`,
+            replyTo: `"${name}" <${email}>`,
+            to: recipientEmail,
+            subject: `New Support Request from ${name}`,
+            text: emailPlainText,
+            html: emailHtml,
+        });
+
+        if (user) {
+          await createNotification(user._id, "Your support request has been sent.", 'support_request');
+        }
+
+        return { success: true, notification: !!user };
+    } catch (error) {
+        console.error("Failed to send support email:", error);
+        return { error: "There was an issue sending your message. Please try again." };
+    }
+}
     

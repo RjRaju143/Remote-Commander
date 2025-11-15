@@ -1,16 +1,36 @@
-
-// This line is crucial to switch the runtime environment to Node.js
-export const runtime = 'nodejs';
-
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import clientPromise from './lib/mongodb';
+
+async function validateSession(sessionId: string, request: NextRequest) {
+  try {
+    const response = await fetch(new URL('/api/auth/session', request.url).toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': `session=${sessionId}` // Forward cookie to API route
+      },
+      body: JSON.stringify({ sessionId })
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      return !!data.user;
+    }
+    return false;
+  } catch (error) {
+    console.error('Middleware fetch error:', error);
+    return false;
+  }
+}
+
 
 export async function middleware(request: NextRequest) {
   const sessionId = request.cookies.get('session')?.value;
-  const isAuthPage = request.nextUrl.pathname === '/' || request.nextUrl.pathname.startsWith('/register');
-  const isDashboardPage = request.nextUrl.pathname.startsWith('/dashboard');
-  const isInvitationPage = request.nextUrl.pathname.startsWith('/invitation');
+  const { pathname } = request.nextUrl;
+
+  const isAuthPage = pathname === '/' || pathname.startsWith('/register');
+  const isDashboardPage = pathname.startsWith('/dashboard');
+  const isInvitationPage = pathname.startsWith('/invitation');
   
   if (isInvitationPage) {
     return NextResponse.next();
@@ -24,23 +44,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // If there is a session ID, verify it with the database
-  let sessionIsValid = false;
-  try {
-    const client = await clientPromise;
-    const db = client.db();
-    const session = await db.collection('sessions').findOne({
-      sessionId: sessionId,
-      expiresAt: { $gt: new Date() }
-    });
-    if (session) {
-      sessionIsValid = true;
-    }
-  } catch (error) {
-    console.error("Middleware session check failed:", error);
-    // Fail safe: treat as invalid session
-    sessionIsValid = false;
-  }
+  // If there is a session ID, verify it by calling our API route
+  const sessionIsValid = await validateSession(sessionId, request);
   
   // If session is invalid, clear cookie and redirect to login if on a protected page
   if (!sessionIsValid) {
@@ -73,12 +78,11 @@ export const config = {
   matcher: [
     /*
      * Match all request paths except for the ones starting with:
-     * - api (API routes)
+     * - api/ (we exclude /api/auth/session inside the middleware logic)
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
-     * - ws (websocket route)
      */
-    '/((?!api|_next/static|_next/image|favicon.ico|ws).*)',
+    '/((?!api/auth/session|api/shell|_next/static|_next/image|favicon.ico|ws).*)',
   ],
 }
