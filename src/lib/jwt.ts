@@ -1,26 +1,21 @@
 
 'use server';
 
-import { jwtVerify, JWTPayload } from "jose";
+// This file is no longer used for authentication but is kept to prevent breaking imports.
+// The authentication logic has been moved to a session-based system.
+// You can safely remove this file if all imports have been updated.
+
 import { Role } from "./auth";
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error("JWT_SECRET environment variable is not set.");
-}
-const secret = new TextEncoder().encode(JWT_SECRET);
-
-export interface CustomJwtPayload extends JWTPayload {
+// Dummy payload to satisfy type imports.
+export interface CustomJwtPayload {
   userId: string;
   email: string;
   roles: Role[];
 }
 
 export async function verifyJwt(token: string): Promise<CustomJwtPayload | null> {
-  try {
-    const { payload } = await jwtVerify<CustomJwtPayload>(token, secret);
-    return payload;
-  } catch (error) {
-    return null;
-  }
+  // This function is deprecated. Session-based auth is used instead.
+  console.warn("verifyJwt is deprecated and should not be used. Switch to session-based authentication.");
+  return null;
 }

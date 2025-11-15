@@ -1,50 +1,75 @@
-
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { verifyJwt } from './lib/jwt';
- 
+
+async function validateSession(sessionId: string, request: NextRequest) {
+  try {
+    const response = await fetch(new URL('/api/auth/session', request.url).toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': `session=${sessionId}` // Forward cookie to API route
+      },
+      body: JSON.stringify({ sessionId })
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      return !!data.user;
+    }
+    return false;
+  } catch (error) {
+    console.error('Middleware fetch error:', error);
+    return false;
+  }
+}
+
+
 export async function middleware(request: NextRequest) {
-  const sessionToken = request.cookies.get('session')?.value;
-  const isAuthPage = request.nextUrl.pathname === '/' || request.nextUrl.pathname.startsWith('/register');
-  const isDashboardPage = request.nextUrl.pathname.startsWith('/dashboard');
-  const isInvitationPage = request.nextUrl.pathname.startsWith('/invitation');
+  const sessionId = request.cookies.get('session')?.value;
+  const { pathname } = request.nextUrl;
+
+  const isAuthPage = pathname === '/' || pathname.startsWith('/register');
+  const isDashboardPage = pathname.startsWith('/dashboard');
+  const isInvitationPage = pathname.startsWith('/invitation');
   
   if (isInvitationPage) {
     return NextResponse.next();
   }
 
-  if (!sessionToken) {
+  // If no session ID, redirect to login if trying to access a protected page
+  if (!sessionId) {
     if (isDashboardPage) {
       return NextResponse.redirect(new URL('/', request.url));
     }
     return NextResponse.next();
   }
 
-  const decoded = await verifyJwt(sessionToken);
-
-  if (!decoded) {
-    // If token is invalid, delete it and redirect to login
-    const response = NextResponse.redirect(new URL('/', request.url));
+  // If there is a session ID, verify it by calling our API route
+  const sessionIsValid = await validateSession(sessionId, request);
+  
+  // If session is invalid, clear cookie and redirect to login if on a protected page
+  if (!sessionIsValid) {
+    const response = isDashboardPage 
+      ? NextResponse.redirect(new URL('/', request.url))
+      : NextResponse.next();
     response.cookies.delete('session');
-    if (isDashboardPage) {
-      return response;
-    }
-    // If on a public page with an invalid token, just clear it and let them stay.
-    const nextResponse = NextResponse.next();
-    nextResponse.cookies.delete('session');
-    return nextResponse;
+    return response;
   }
 
-  // If user is authenticated and tries to access login/register, redirect to dashboard
+  // If user has a valid session and tries to access login/register, redirect to dashboard
   if (isAuthPage) {
     const url = request.nextUrl.clone();
     const redirectUrl = url.searchParams.get('redirect');
     if (redirectUrl) {
-      return NextResponse.redirect(new URL(redirectUrl, request.url));
+      // Basic validation to prevent open redirects
+      if (redirectUrl.startsWith('/')) {
+        return NextResponse.redirect(new URL(redirectUrl, request.url));
+      }
     }
     return NextResponse.redirect(new URL('/dashboard', request.url));
   }
  
+  // All checks passed, continue to the requested page
   return NextResponse.next();
 }
  
@@ -53,12 +78,11 @@ export const config = {
   matcher: [
     /*
      * Match all request paths except for the ones starting with:
-     * - api (API routes)
+     * - api/ (we exclude /api/auth/session inside the middleware logic)
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
-     * - ws (websocket route)
      */
-    '/((?!api|_next/static|_next/image|favicon.ico|ws).*)',
+    '/((?!api/auth/session|api/shell|_next/static|_next/image|favicon.ico|ws).*)',
   ],
 }

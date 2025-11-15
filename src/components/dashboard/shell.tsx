@@ -128,7 +128,11 @@ export function Shell({ serverId }: { serverId: string; username: string }) {
     }
     
     xterm.open(terminalRef.current);
-    fitAddon.fit();
+    
+    // Add a small delay to prevent race condition on initial load
+    setTimeout(() => {
+        fitAddon.fit();
+    }, 10);
     
     connect(xterm.cols, xterm.rows);
 

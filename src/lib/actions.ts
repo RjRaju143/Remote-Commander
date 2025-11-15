@@ -3,7 +3,6 @@
 
 import { z } from "zod";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 import clientPromise from "./mongodb";
 import { revalidatePath } from "next/cache";
 import { ServerSchema } from "@/models/Server";
@@ -16,7 +15,6 @@ import { Client } from 'ssh2';
 import nodemailer from 'nodemailer';
 import { NotificationModel, NotificationSchema, NotificationType } from "@/models/Notification";
 import { decrypt, encrypt, getServerById as getServerByIdHelper } from "./server-helpers";
-import { verifyJwt } from "./jwt";
 import { getServerMetricsCommand } from "@/ai/flows/get-server-metrics";
 import { canUser, isUserAdmin, getUserPermission } from "./auth";
 import { getInvitationByToken } from "./invitations";
@@ -40,9 +38,32 @@ const LoginSchema = z.object({
   password: z.string().min(1, { message: "Password is required." }),
 });
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error("JWT_SECRET environment variable is not set.");
+const SESSION_DURATION_SECONDS = 60 * 60 * 24 * 7; // 7 days
+
+async function createSession(userId: string) {
+  try {
+    const sessionId = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + SESSION_DURATION_SECONDS * 1000);
+
+    const client = await clientPromise;
+    const db = client.db();
+    const sessionCollection = db.collection('sessions');
+
+    // Insert the session document first. This creates the collection if it doesn't exist.
+    await sessionCollection.insertOne({
+      sessionId,
+      userId: new ObjectId(userId),
+      expiresAt
+    });
+
+    // Now, ensure the TTL index exists. This is idempotent.
+    await sessionCollection.createIndex({ "expiresAt": 1 }, { expireAfterSeconds: 0 });
+
+    return { success: true, sessionId };
+  } catch (error) {
+    console.error("Session creation failed:", error);
+    return { success: false, error: "Could not create a session." };
+  }
 }
 
 
@@ -75,20 +96,18 @@ export async function handleLogin(
       return { error: "Invalid email or password." };
     }
 
-    const token = jwt.sign(
-      { userId: user._id.toString(), email: user.email, roles: user.roles || ['user'] },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    const cookieStore = await cookies();
-    cookieStore.set('session', token, {
+    const sessionResult = await createSession(user._id.toString());
+    if (!sessionResult.success || !sessionResult.sessionId) {
+      return { error: sessionResult.error };
+    }
+    
+    cookies().set('session', sessionResult.sessionId, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      maxAge: 60 * 60 * 24 * 7,
+      maxAge: SESSION_DURATION_SECONDS,
       path: '/',
     });
-
+    
     return { success: true };
   } catch (error) {
     console.error(error);
@@ -144,20 +163,17 @@ export async function handleRegister(
       roles: ['user'], // Default role
     });
     
-    const token = jwt.sign(
-      { userId: result.insertedId.toString(), email, roles: ['user'] },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    const sessionResult = await createSession(result.insertedId.toString());
+    if (!sessionResult.success || !sessionResult.sessionId) {
+      return { error: sessionResult.error };
+    }
 
-    const cookieStore = await cookies()
-    cookieStore.set('session', token, {
+    cookies().set('session', sessionResult.sessionId, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      maxAge: 60 * 60 * 24 * 7,
+      maxAge: SESSION_DURATION_SECONDS,
       path: '/',
     });
-
 
     return { success: true };
   } catch (error) {
@@ -167,8 +183,17 @@ export async function handleRegister(
 }
 
 export async function handleLogout() {
-  const cookieStore = await cookies()
-  cookieStore.delete('session');
+  const sessionId = cookies().get('session')?.value;
+  if (sessionId) {
+    try {
+      const client = await clientPromise;
+      const db = client.db();
+      await db.collection('sessions').deleteOne({ sessionId });
+    } catch (error) {
+      console.error("Failed to delete session from DB:", error);
+    }
+  }
+  cookies().delete('session');
   redirect('/');
 }
 
@@ -424,7 +449,7 @@ export async function updateServer(
   
   const { serverId, ...serverData } = validatedFields.data;
 
-  const server = await getServerById(serverId);
+  const server = await getServerByIdHelper(serverId, user._id);
   if (!server) return { error: "Server not found." };
   
   const hasPermission = await canUser(server, Permission.ADMIN, user);
@@ -476,7 +501,7 @@ export async function deleteServer(serverId: string) {
     const client = await clientPromise;
     const db = client.db();
     
-    const serverToDelete = await getServerById(serverId);
+    const serverToDelete = await getServerByIdHelper(serverId, user._id);
     if (!serverToDelete) {
       return { error: "Server not found." };
     }
@@ -509,7 +534,7 @@ export async function testServerConnection(serverId: string): Promise<{ success:
     const user = await getCurrentUser();
     if (!user) return { success: false, error: 'Authentication failed. Please log in again.' };
 
-    const server = await getServerById(serverId);
+    const server = await getServerByIdHelper(serverId, user._id);
     if (!server) return { success: false, error: 'Server not found or you do not have permission.' };
     
     const hasPermission = await canUser(server, Permission.EXECUTE, user);
@@ -559,7 +584,7 @@ export async function getServerPrivateKey(serverId: string): Promise<{error?: st
   
   if (!ObjectId.isValid(serverId)) return { error: "Invalid server ID." };
 
-  const server = await getServerById(serverId);
+  const server = await getServerByIdHelper(serverId, user._id);
   if (!server) return { error: "Server not found or you do not have permission to download the key." };
 
   const hasPermission = await canUser(server, Permission.ADMIN, user);
@@ -674,6 +699,437 @@ export async function handleUpdateProfile(
     } catch (error) {
         console.error('Failed to update profile:', error);
         return { error: 'An unexpected error occurred.' };
+    }
+}
+
+export async function getUserForProfile(): Promise<User | null> {
+    const user = await getCurrentUser();
+    if (!user) {
+        return null;
+    }
+    // Only return fields safe for the client
+    return {
+        _id: user._id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+    };
+}
+
+// Notification Actions
+
+export async function createNotification(
+    userId: string,
+    message: string,
+    type: NotificationType,
+    link?: string
+) {
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+
+        const notification: NotificationModel = {
+            userId: new ObjectId(userId),
+            message,
+            type,
+            link: link || '#',
+            isRead: false,
+            timestamp: new Date(),
+        };
+
+        const validatedNotification = NotificationSchema.safeParse(notification);
+        if (!validatedNotification.success) {
+            console.error("Invalid notification data:", validatedNotification.error);
+            return;
+        }
+
+        await db.collection('notifications').insertOne(validatedNotification.data);
+    } catch (error) {
+        console.error("Failed to create notification:", error);
+    }
+}
+
+export async function getNotifications(): Promise<{ notifications: Notification[], unreadCount: number }> {
+    const user = await getCurrentUser();
+    if (!user) {
+        return { notifications: [], unreadCount: 0 };
+    }
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        const userId = new ObjectId(user._id);
+
+        const notifications = await db.collection('notifications')
+            .find({ userId })
+            .sort({ timestamp: -1 })
+            .limit(20) // Get last 20 notifications
+            .toArray();
+        
+        const unreadCount = await db.collection('notifications').countDocuments({ userId, isRead: false });
+
+        const plainNotifications = JSON.parse(JSON.stringify(notifications));
+
+        return { notifications: plainNotifications.map((n: any) => ({...n, _id: n._id.toString()})), unreadCount };
+
+    } catch (error) {
+        console.error("Failed to get notifications:", error);
+        return { notifications: [], unreadCount: 0 };
+    }
+}
+
+export async function markNotificationAsRead(notificationId: string) {
+    const user = await getCurrentUser();
+    if (!user) return { error: "Unauthorized" };
+
+    if (!ObjectId.isValid(notificationId)) return { error: "Invalid ID" };
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        await db.collection('notifications').updateOne(
+            { _id: new ObjectId(notificationId), userId: new ObjectId(user._id) },
+            { $set: { isRead: true } }
+        );
+        return { success: true };
+    } catch (error) {
+        console.error("Failed to mark notification as read:", error);
+        return { error: "Database error" };
+    }
+}
+
+export async function markAllNotificationsAsRead() {
+    const user = await getCurrentUser();
+    if (!user) return { error: "Unauthorized" };
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        await db.collection('notifications').updateMany(
+            { userId: new ObjectId(user._id), isRead: false },
+            { $set: { isRead: true } }
+        );
+        return { success: true };
+    } catch (error) {
+        console.error("Failed to mark all notifications as read:", error);
+        return { error: "Database error" };
+    }
+}
+    
+export async function deleteAllNotifications() {
+    const user = await getCurrentUser();
+    if (!user) return { error: "Unauthorized" };
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        await db.collection('notifications').deleteMany({ userId: new ObjectId(user._id) });
+        return { success: true };
+    } catch (error) {
+        console.error("Failed to delete all notifications:", error);
+        return { error: "Database error" };
+    }
+}
+
+
+export async function getServerMetrics(serverId: string) {
+    const user = await getCurrentUser();
+    if (!user) return { error: 'Authentication failed. Please log in again.' };
+
+    const server = await getServerByIdHelper(serverId, user._id);
+    if (!server) return { error: 'Server not found or you do not have permission.' };
+    
+    const hasPermission = await canUser(server, Permission.EXECUTE, user);
+    if (!hasPermission) {
+        return { error: 'You do not have permission to execute commands on this server.' };
+    }
+
+    try {
+        const { command } = await getServerMetricsCommand();
+
+        return new Promise((resolve) => {
+            const conn = new Client();
+            let output = '';
+
+            conn.on('ready', () => {
+                conn.exec(command, (err, stream) => {
+                    if (err) {
+                        conn.end();
+                        return resolve({ error: `Execution error: ${err.message}` });
+                    }
+                    stream.on('data', (data: Buffer) => {
+                        output += data.toString();
+                    }).on('close', () => {
+                        conn.end();
+                        const [cpu, memory, disk] = output.trim().split(' ').map(parseFloat);
+                        if (!isNaN(cpu) && !isNaN(memory) && !isNaN(disk)) {
+                            resolve({ success: true, metrics: { cpu, memory, disk } });
+                        } else {
+                            resolve({ error: 'Failed to parse metrics from server output.' });
+                        }
+                    });
+                });
+            }).on('error', (err: Error) => {
+                resolve({ error: `Connection error: ${err.message}` });
+            }).connect({
+                host: server.ip,
+                port: Number(server.port),
+                username: server.username,
+                privateKey: decrypt(server.privateKey || ''),
+                readyTimeout: 10000,
+            });
+        });
+    } catch (error: any) {
+        return { error: `Failed to get metrics command: ${error.message}` };
+    }
+}
+
+
+const SmtpSettingsSchema = z.object({
+  host: z.string().min(1, 'Host is required'),
+  port: z.coerce.number().min(1, 'Port is required'),
+  user: z.string().min(1, 'User is required'),
+  pass: z.string().min(1, 'Password is required'),
+  senderEmail: z.string().email('Invalid sender email'),
+});
+
+export async function saveSmtpSettings(
+    prevState: AuthState | undefined,
+    formData: FormData
+): Promise<AuthState> {
+    const user = await getCurrentUser();
+    if (!user || !isUserAdmin(user)) {
+        return { error: "You do not have permission to modify SMTP settings." };
+    }
+
+    const validatedFields = SmtpSettingsSchema.safeParse(Object.fromEntries(formData.entries()));
+    if (!validatedFields.success) {
+        return { error: validatedFields.error.errors[0].message };
+    }
+
+    const { pass, ...settings } = validatedFields.data;
+    const encryptedPass = encrypt(pass);
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        await db.collection('settings').updateOne(
+            { key: 'smtp' },
+            { $set: { key: 'smtp', ...settings, pass: encryptedPass } },
+            { upsert: true }
+        );
+        revalidatePath('/dashboard/settings');
+        return { success: true, message: "SMTP settings saved successfully." };
+    } catch (error) {
+        console.error("Failed to save SMTP settings:", error);
+        return { error: "Could not save settings to database." };
+    }
+}
+
+export async function getSmtpSettings() {
+    const user = await getCurrentUser();
+    if (!user || !isUserAdmin(user)) return null;
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        const settings = await db.collection('settings').findOne({ key: 'smtp' });
+        if (!settings) return null;
+        
+        const { pass, ...rest } = settings; // Don't send password to client
+        return JSON.parse(JSON.stringify(rest));
+    } catch (error) {
+        console.error("Failed to get SMTP settings:", error);
+        return null;
+    }
+}
+
+export async function deleteSmtpSettings() {
+    const user = await getCurrentUser();
+    if (!user || !isUserAdmin(user)) {
+        return { error: "You do not have permission to delete SMTP settings." };
+    }
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        await db.collection('settings').deleteOne({ key: 'smtp' });
+        revalidatePath('/dashboard/settings');
+        return { success: true };
+    } catch (error) {
+        console.error("Failed to delete SMTP settings:", error);
+        return { error: "Database error." };
+    }
+}
+
+export async function testSmtpConnection(
+    prevState: AuthState | undefined,
+    formData: FormData
+): Promise<AuthState> {
+    const user = await getCurrentUser();
+    if (!user || !isUserAdmin(user)) {
+        return { error: "Unauthorized" };
+    }
+
+    const validatedFields = SmtpSettingsSchema.safeParse(Object.fromEntries(formData.entries()));
+    if (!validatedFields.success) {
+        return { error: "Invalid data." };
+    }
+
+    const settings = validatedFields.data;
+
+    const transporter = nodemailer.createTransport({
+        host: settings.host,
+        port: settings.port,
+        secure: settings.port === 465,
+        auth: {
+            user: settings.user,
+            pass: settings.pass,
+        },
+    });
+
+    try {
+        await transporter.verify();
+        return { success: true, message: "Connection successful!" };
+    } catch (error: any) {
+        return { error: `Connection failed: ${error.message}` };
+    }
+}
+
+export async function handleInvitation(token: string, action: 'accept' | 'decline') {
+    const user = await getCurrentUser();
+    if (!user) return { error: "You must be logged in to respond to an invitation." };
+
+    const db = (await clientPromise).db();
+    const invitation = await db.collection('invitations').findOne({ token, status: 'pending', expiresAt: { $gt: new Date() } });
+
+    if (!invitation) return { error: "This invitation is invalid or has expired." };
+    if (invitation.email !== user.email) return { error: "This invitation is for a different user." };
+    if (invitation.ownerId.toString() === user._id) return { error: "You cannot accept an invitation you sent." };
+
+    if (action === 'decline') {
+        await db.collection('invitations').updateOne({ _id: invitation._id }, { $set: { status: 'declined', recipientId: new ObjectId(user._id) } });
+        return { success: true, message: "You have declined the invitation." };
+    }
+
+    // Accept
+    const result = await db.collection('invitations').findOneAndUpdate(
+        { _id: invitation._id },
+        { $set: { status: 'accepted', recipientId: new ObjectId(user._id) } },
+        { returnDocument: 'after' }
+    );
+    
+    // Add user to the server's guestIds array
+    await db.collection('servers').updateOne(
+        { _id: invitation.serverId },
+        { $addToSet: { guestIds: new ObjectId(user._id) } }
+    );
+    
+    if (result) {
+        await createNotification(invitation.ownerId.toString(), `${user.email} has accepted your invitation to access a server.`, 'server_shared');
+        revalidatePath('/dashboard/guests');
+        revalidatePath('/dashboard');
+        return { success: true, serverId: invitation.serverId.toString() };
+    } else {
+        return { error: 'Failed to accept invitation.' };
+    }
+}
+
+
+/**
+ * Gets the currently logged-in user from the session cookie.
+ */
+export async function getCurrentUser(): Promise<User | null> {
+    const cookieStore = cookies();
+    const sessionId = cookieStore.get('session')?.value;
+    if (!sessionId) return null;
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        
+        // Find session and check if it's expired
+        const session = await db.collection('sessions').findOne({ 
+            sessionId: sessionId,
+            expiresAt: { $gt: new Date() }
+        });
+
+        if (!session) {
+            // Clean up expired cookie
+            cookieStore.delete('session');
+            return null;
+        }
+
+        const user = await db.collection('users').findOne(
+            { _id: session.userId },
+        );
+        if (!user) {
+            return null;
+        }
+        
+        const plainUser = JSON.parse(JSON.stringify(user));
+        plainUser._id = plainUser._id.toString();
+        // Ensure favorites is an array even if it's missing
+        plainUser.favorites = plainUser.favorites?.map((id: ObjectId | string) => id.toString()) || [];
+        plainUser.roles = plainUser.roles || ['user'];
+
+        return plainUser;
+    } catch (error) {
+        console.error('Failed to fetch user:', error);
+        return null;
+    }
+}
+
+
+export async function leaveSharedServer(serverId: string) {
+    const guestUser = await getCurrentUser();
+    if (!guestUser) {
+        return { error: "You must be logged in." };
+    }
+
+    if (!ObjectId.isValid(serverId)) {
+        return { error: "Invalid server ID." };
+    }
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        const serverObjectId = new ObjectId(serverId);
+        const guestUserObjectId = new ObjectId(guestUser._id);
+        
+        const server = await db.collection('servers').findOne({ _id: serverObjectId });
+        if (!server) {
+            return { error: "The associated server could not be found." };
+        }
+        
+        // Remove guest from server's guestIds array
+        const updateResult = await db.collection('servers').updateOne(
+            { _id: serverObjectId },
+            { $pull: { guestIds: guestUserObjectId } }
+        );
+
+        if (updateResult.modifiedCount === 0) {
+            return { error: "Failed to remove your access. You might not have been a guest on this server." };
+        }
+        
+        // Also update any related invitations to 'revoked' status for clarity
+        await db.collection('invitations').updateMany(
+            { serverId: serverObjectId, recipientId: guestUserObjectId },
+            { $set: { status: 'revoked' } }
+        );
+
+        // Notify the owner
+        await createNotification(
+            server.ownerId.toString(),
+            `Guest ${guestUser.email} has removed their own access from your server: "${server.name}".`,
+            'server_shared'
+        );
+
+        revalidatePath('/dashboard');
+        return { success: true, notification: true };
+    } catch (error) {
+        console.error("Failed to leave server:", error);
+        return { error: "An unexpected error occurred." };
     }
 }
 
@@ -882,426 +1338,5 @@ This email was automatically generated by the Remote Commander application.
     } catch (error) {
         console.error("Failed to send support email:", error);
         return { error: "There was an issue sending your message. Please try again." };
-    }
-}
-
-export async function getUserForProfile(): Promise<User | null> {
-    const user = await getCurrentUser();
-    if (!user) {
-        return null;
-    }
-    // Only return fields safe for the client
-    return {
-        _id: user._id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-    };
-}
-
-// Notification Actions
-
-export async function createNotification(
-    userId: string,
-    message: string,
-    type: NotificationType,
-    link?: string
-) {
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-
-        const notification: NotificationModel = {
-            userId: new ObjectId(userId),
-            message,
-            type,
-            link: link || '#',
-            isRead: false,
-            timestamp: new Date(),
-        };
-
-        const validatedNotification = NotificationSchema.safeParse(notification);
-        if (!validatedNotification.success) {
-            console.error("Invalid notification data:", validatedNotification.error);
-            return;
-        }
-
-        await db.collection('notifications').insertOne(validatedNotification.data);
-    } catch (error) {
-        console.error("Failed to create notification:", error);
-    }
-}
-
-export async function getNotifications(): Promise<{ notifications: Notification[], unreadCount: number }> {
-    const user = await getCurrentUser();
-    if (!user) {
-        return { notifications: [], unreadCount: 0 };
-    }
-
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-        const userId = new ObjectId(user._id);
-
-        const notifications = await db.collection('notifications')
-            .find({ userId })
-            .sort({ timestamp: -1 })
-            .limit(20) // Get last 20 notifications
-            .toArray();
-        
-        const unreadCount = await db.collection('notifications').countDocuments({ userId, isRead: false });
-
-        const plainNotifications = JSON.parse(JSON.stringify(notifications));
-
-        return { notifications: plainNotifications.map((n: any) => ({...n, _id: n._id.toString()})), unreadCount };
-
-    } catch (error) {
-        console.error("Failed to get notifications:", error);
-        return { notifications: [], unreadCount: 0 };
-    }
-}
-
-export async function markNotificationAsRead(notificationId: string) {
-    const user = await getCurrentUser();
-    if (!user) return { error: "Unauthorized" };
-
-    if (!ObjectId.isValid(notificationId)) return { error: "Invalid ID" };
-
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-        await db.collection('notifications').updateOne(
-            { _id: new ObjectId(notificationId), userId: new ObjectId(user._id) },
-            { $set: { isRead: true } }
-        );
-        return { success: true };
-    } catch (error) {
-        console.error("Failed to mark notification as read:", error);
-        return { error: "Database error" };
-    }
-}
-
-export async function markAllNotificationsAsRead() {
-    const user = await getCurrentUser();
-    if (!user) return { error: "Unauthorized" };
-
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-        await db.collection('notifications').updateMany(
-            { userId: new ObjectId(user._id), isRead: false },
-            { $set: { isRead: true } }
-        );
-        return { success: true };
-    } catch (error) {
-        console.error("Failed to mark all notifications as read:", error);
-        return { error: "Database error" };
-    }
-}
-    
-export async function deleteAllNotifications() {
-    const user = await getCurrentUser();
-    if (!user) return { error: "Unauthorized" };
-
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-        await db.collection('notifications').deleteMany({ userId: new ObjectId(user._id) });
-        return { success: true };
-    } catch (error) {
-        console.error("Failed to delete all notifications:", error);
-        return { error: "Database error" };
-    }
-}
-
-
-export async function getServerMetrics(serverId: string) {
-    const user = await getCurrentUser();
-    if (!user) return { error: 'Authentication failed. Please log in again.' };
-
-    const server = await getServerById(serverId);
-    if (!server) return { error: 'Server not found or you do not have permission.' };
-    
-    const hasPermission = await canUser(server, Permission.EXECUTE, user);
-    if (!hasPermission) {
-        return { error: 'You do not have permission to execute commands on this server.' };
-    }
-
-    try {
-        const { command } = await getServerMetricsCommand();
-
-        return new Promise((resolve) => {
-            const conn = new Client();
-            let output = '';
-
-            conn.on('ready', () => {
-                conn.exec(command, (err, stream) => {
-                    if (err) {
-                        conn.end();
-                        return resolve({ error: `Execution error: ${err.message}` });
-                    }
-                    stream.on('data', (data: Buffer) => {
-                        output += data.toString();
-                    }).on('close', () => {
-                        conn.end();
-                        const [cpu, memory, disk] = output.trim().split(' ').map(parseFloat);
-                        if (!isNaN(cpu) && !isNaN(memory) && !isNaN(disk)) {
-                            resolve({ success: true, metrics: { cpu, memory, disk } });
-                        } else {
-                            resolve({ error: 'Failed to parse metrics from server output.' });
-                        }
-                    });
-                });
-            }).on('error', (err: Error) => {
-                resolve({ error: `Connection error: ${err.message}` });
-            }).connect({
-                host: server.ip,
-                port: Number(server.port),
-                username: server.username,
-                privateKey: decrypt(server.privateKey || ''),
-                readyTimeout: 10000,
-            });
-        });
-    } catch (error: any) {
-        return { error: `Failed to get metrics command: ${error.message}` };
-    }
-}
-
-
-const SmtpSettingsSchema = z.object({
-  host: z.string().min(1, 'Host is required'),
-  port: z.coerce.number().min(1, 'Port is required'),
-  user: z.string().min(1, 'User is required'),
-  pass: z.string().min(1, 'Password is required'),
-  senderEmail: z.string().email('Invalid sender email'),
-});
-
-export async function saveSmtpSettings(
-    prevState: AuthState | undefined,
-    formData: FormData
-): Promise<AuthState> {
-    const user = await getCurrentUser();
-    if (!user || !isUserAdmin(user)) {
-        return { error: "You do not have permission to modify SMTP settings." };
-    }
-
-    const validatedFields = SmtpSettingsSchema.safeParse(Object.fromEntries(formData.entries()));
-    if (!validatedFields.success) {
-        return { error: validatedFields.error.errors[0].message };
-    }
-
-    const { pass, ...settings } = validatedFields.data;
-    const encryptedPass = encrypt(pass);
-
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-        await db.collection('settings').updateOne(
-            { key: 'smtp' },
-            { $set: { key: 'smtp', ...settings, pass: encryptedPass } },
-            { upsert: true }
-        );
-        revalidatePath('/dashboard/settings');
-        return { success: true, message: "SMTP settings saved successfully." };
-    } catch (error) {
-        console.error("Failed to save SMTP settings:", error);
-        return { error: "Could not save settings to database." };
-    }
-}
-
-export async function getSmtpSettings() {
-    const user = await getCurrentUser();
-    if (!user || !isUserAdmin(user)) return null;
-
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-        const settings = await db.collection('settings').findOne({ key: 'smtp' });
-        if (!settings) return null;
-        
-        const { pass, ...rest } = settings; // Don't send password to client
-        return JSON.parse(JSON.stringify(rest));
-    } catch (error) {
-        console.error("Failed to get SMTP settings:", error);
-        return null;
-    }
-}
-
-export async function deleteSmtpSettings() {
-    const user = await getCurrentUser();
-    if (!user || !isUserAdmin(user)) {
-        return { error: "You do not have permission to delete SMTP settings." };
-    }
-
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-        await db.collection('settings').deleteOne({ key: 'smtp' });
-        revalidatePath('/dashboard/settings');
-        return { success: true };
-    } catch (error) {
-        console.error("Failed to delete SMTP settings:", error);
-        return { error: "Database error." };
-    }
-}
-
-export async function testSmtpConnection(
-    prevState: AuthState | undefined,
-    formData: FormData
-): Promise<AuthState> {
-    const user = await getCurrentUser();
-    if (!user || !isUserAdmin(user)) {
-        return { error: "Unauthorized" };
-    }
-
-    const validatedFields = SmtpSettingsSchema.safeParse(Object.fromEntries(formData.entries()));
-    if (!validatedFields.success) {
-        return { error: "Invalid data." };
-    }
-
-    const settings = validatedFields.data;
-
-    const transporter = nodemailer.createTransport({
-        host: settings.host,
-        port: settings.port,
-        secure: settings.port === 465,
-        auth: {
-            user: settings.user,
-            pass: settings.pass,
-        },
-    });
-
-    try {
-        await transporter.verify();
-        return { success: true, message: "Connection successful!" };
-    } catch (error: any) {
-        return { error: `Connection failed: ${error.message}` };
-    }
-}
-
-export async function handleInvitation(token: string, action: 'accept' | 'decline') {
-    const user = await getCurrentUser();
-    if (!user) return { error: "You must be logged in to respond to an invitation." };
-
-    const db = (await clientPromise).db();
-    const invitation = await db.collection('invitations').findOne({ token, status: 'pending', expiresAt: { $gt: new Date() } });
-
-    if (!invitation) return { error: "This invitation is invalid or has expired." };
-    if (invitation.email !== user.email) return { error: "This invitation is for a different user." };
-    if (invitation.ownerId.toString() === user._id) return { error: "You cannot accept an invitation you sent." };
-
-    if (action === 'decline') {
-        await db.collection('invitations').updateOne({ _id: invitation._id }, { $set: { status: 'declined', recipientId: new ObjectId(user._id) } });
-        return { success: true, message: "You have declined the invitation." };
-    }
-
-    // Accept
-    const result = await db.collection('invitations').findOneAndUpdate(
-        { _id: invitation._id },
-        { $set: { status: 'accepted', recipientId: new ObjectId(user._id) } },
-        { returnDocument: 'after' }
-    );
-    
-    // Add user to the server's guestIds array
-    await db.collection('servers').updateOne(
-        { _id: invitation.serverId },
-        { $addToSet: { guestIds: new ObjectId(user._id) } }
-    );
-    
-    if (result) {
-        await createNotification(invitation.ownerId.toString(), `${user.email} has accepted your invitation to access a server.`, 'server_shared');
-        revalidatePath('/dashboard/guests');
-        revalidatePath('/dashboard');
-        return { success: true, serverId: invitation.serverId.toString() };
-    } else {
-        return { error: 'Failed to accept invitation.' };
-    }
-}
-
-
-/**
- * Gets the currently logged-in user from the session cookie.
- */
-export async function getCurrentUser(): Promise<User | null> {
-    const cookieStore = await cookies()
-    const token = cookieStore.get('session')?.value;
-    if (!token) return null;
-
-    const decoded = await verifyJwt(token);
-    if (!decoded || !decoded.userId) return null;
-    
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-        const user = await db.collection('users').findOne(
-            { _id: new ObjectId(decoded.userId as string) },
-        );
-        if (!user) {
-            return null;
-        }
-        
-        const plainUser = JSON.parse(JSON.stringify(user));
-        plainUser._id = plainUser._id.toString();
-        // Ensure favorites is an array even if it's missing
-        plainUser.favorites = plainUser.favorites?.map((id: ObjectId | string) => id.toString()) || [];
-        plainUser.roles = plainUser.roles || ['user'];
-
-        return plainUser;
-    } catch (error) {
-        console.error('Failed to fetch user:', error);
-        return null;
-    }
-}
-
-
-export async function leaveSharedServer(serverId: string) {
-    const guestUser = await getCurrentUser();
-    if (!guestUser) {
-        return { error: "You must be logged in." };
-    }
-
-    if (!ObjectId.isValid(serverId)) {
-        return { error: "Invalid server ID." };
-    }
-
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-        const serverObjectId = new ObjectId(serverId);
-        const guestUserObjectId = new ObjectId(guestUser._id);
-        
-        const server = await db.collection('servers').findOne({ _id: serverObjectId });
-        if (!server) {
-            return { error: "The associated server could not be found." };
-        }
-        
-        // Remove guest from server's guestIds array
-        const updateResult = await db.collection('servers').updateOne(
-            { _id: serverObjectId },
-            { $pull: { guestIds: guestUserObjectId } }
-        );
-
-        if (updateResult.modifiedCount === 0) {
-            return { error: "Failed to remove your access. You might not have been a guest on this server." };
-        }
-        
-        // Also update any related invitations to 'revoked' status for clarity
-        await db.collection('invitations').updateMany(
-            { serverId: serverObjectId, recipientId: guestUserObjectId },
-            { $set: { status: 'revoked' } }
-        );
-
-        // Notify the owner
-        await createNotification(
-            server.ownerId.toString(),
-            `Guest ${guestUser.email} has removed their own access from your server: "${server.name}".`,
-            'server_shared'
-        );
-
-        revalidatePath('/dashboard');
-        return { success: true, notification: true };
-    } catch (error) {
-        console.error("Failed to leave server:", error);
-        return { error: "An unexpected error occurred." };
     }
 }
