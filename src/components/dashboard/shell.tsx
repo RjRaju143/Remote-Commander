@@ -86,7 +86,7 @@ export function Shell({ serverId }: { serverId: string; username: string }) {
         }
     } catch (error) {
         console.error('Connection error:', error);
-        term.current.write(`\r\n\x1b[1;31m*** Connection failed: ${(error as Error).message} ***\x1b[0m\r`n`);
+        term.current.write(`\r\n\x1b[1;31m*** Connection failed: ${(error as Error).message} ***\x1b[0m\r\n`);
     }
   }
 
