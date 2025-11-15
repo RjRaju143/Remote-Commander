@@ -2,8 +2,8 @@
 'use server';
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/actions';
-import { getServerById, decrypt } from '@/lib/server-helpers';
+import { getCurrentUser, getServerById } from '@/lib/actions';
+import { decrypt } from '@/lib/server-helpers';
 import { Client } from 'ssh2';
 import { addSession, deleteSession } from '@/lib/shell-sessions';
 import { canUser } from '@/lib/auth';
@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: 'Server ID is required' }, { status: 400 });
   }
 
-  const serverCreds = await getServerById(serverId, user._id);
+  const serverCreds = await getServerById(serverId);
   if (!serverCreds) {
     return NextResponse.json({ message: 'Server not found or permission denied' }, { status: 404 });
   }

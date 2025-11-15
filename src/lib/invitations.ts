@@ -41,6 +41,41 @@ const InviteUserSchema = z.object({
     permission: z.enum([Permission.READ, Permission.EXECUTE]),
 });
 
+async function getTransporter() {
+    const db = (await clientPromise).db();
+    const smtpSettings = await db.collection('settings').findOne({ key: 'smtp' });
+
+    if (smtpSettings) {
+        return nodemailer.createTransport({
+            host: smtpSettings.host,
+            port: Number(smtpSettings.port),
+            secure: Number(smtpSettings.port) === 465,
+            auth: {
+                user: smtpSettings.user,
+                pass: decrypt(smtpSettings.pass),
+            },
+        });
+    }
+
+    const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
+    if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
+        throw new Error("SMTP service is not configured in database or environment variables.");
+    }
+
+    return nodemailer.createTransport({
+        host: SMTP_HOST,
+        port: Number(SMTP_PORT),
+        secure: Number(SMTP_PORT) === 465,
+        auth: { user: SMTP_USER, pass: SMTP_PASS },
+    });
+}
+
+async function getSenderEmail() {
+    const db = (await clientPromise).db();
+    const smtpSettings = await db.collection('settings').findOne({ key: 'smtp' });
+    return smtpSettings?.senderEmail || process.env.SENDER_EMAIL;
+}
+
 export async function inviteUserToServer(prevState: any, formData: FormData) {
     const owner = await getCurrentUser();
     if (!owner) return { error: "You must be logged in." };
@@ -110,7 +145,8 @@ export async function inviteUserToServer(prevState: any, formData: FormData) {
     } catch(e: any) {
         // If email fails, delete the invitation to allow retrying
         await db.collection('invitations').deleteOne({ token });
-        return { error: `Could not send invitation email. ${e.message}` };
+        console.error("Failed to send invitation email:", e);
+        return { error: `Could not send invitation email. Please check server configuration. Error: ${e.message}` };
     }
 
     await createNotification(owner._id, `You invited ${email} to access "${serverName}".`, 'server_shared');
@@ -120,32 +156,12 @@ export async function inviteUserToServer(prevState: any, formData: FormData) {
 }
 
 async function sendInvitationEmail(recipientEmail: string, ownerEmail: string, serverName: string, token: string) {
-    const dbClient = await clientPromise;
-    const db = dbClient.db();
-    const smtpSettings = await db.collection('settings').findOne({ key: 'smtp' });
-
-    let transporter;
-    if (smtpSettings) {
-        transporter = nodemailer.createTransport({
-            host: smtpSettings.host,
-            port: Number(smtpSettings.port),
-            secure: Number(smtpSettings.port) === 465,
-            auth: { user: smtpSettings.user, pass: decrypt(smtpSettings.pass) },
-        });
-    } else {
-        const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
-        if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
-            throw new Error("SMTP service is not configured.");
-        }
-        transporter = nodemailer.createTransport({
-            host: SMTP_HOST,
-            port: Number(SMTP_PORT),
-            secure: Number(SMTP_PORT) === 465,
-            auth: { user: SMTP_USER, pass: SMTP_PASS },
-        });
+    const transporter = await getTransporter();
+    const senderEmail = await getSenderEmail();
+    if (!senderEmail) {
+      throw new Error("Sender email is not configured.");
     }
     
-    const senderUser = smtpSettings?.user || process.env.SMTP_USER;
     const invitationUrl = `${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/invitation?token=${token}`;
     
     const emailHtml = `
@@ -161,7 +177,7 @@ async function sendInvitationEmail(recipientEmail: string, ownerEmail: string, s
     </html>`;
 
     await transporter.sendMail({
-        from: `"Remote Commander" <${senderUser}>`,
+        from: `"Remote Commander" <${senderEmail}>`,
         to: recipientEmail,
         subject: `Invitation to access ${serverName} on Remote Commander`,
         html: emailHtml,

@@ -10,15 +10,15 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import type { User } from "@/models/User";
 import { ObjectId } from "mongodb";
-import type { Server } from "./types";
 import { Client } from 'ssh2';
 import nodemailer from 'nodemailer';
 import { NotificationModel, NotificationSchema, NotificationType } from "@/models/Notification";
-import { decrypt, encrypt, getServerById as getServerByIdHelper } from "./server-helpers";
+import { decrypt, encrypt } from "./server-helpers";
 import { getServerMetricsCommand } from "@/ai/flows/get-server-metrics";
-import { canUser, isUserAdmin, getUserPermission } from "./auth";
-import { getInvitationByToken } from "./invitations";
+import { canUser, isUserAdmin } from "./auth";
 import { Permission } from "./types";
+import type { Server } from "./types";
+
 
 export interface GenerateCommandState {
   result?: any;
@@ -101,7 +101,8 @@ export async function handleLogin(
       return { error: sessionResult.error };
     }
     
-    cookies().set('session', sessionResult.sessionId, {
+    const cookieStore = await cookies();
+    cookieStore.set('session', sessionResult.sessionId, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       maxAge: SESSION_DURATION_SECONDS,
@@ -168,7 +169,8 @@ export async function handleRegister(
       return { error: sessionResult.error };
     }
 
-    cookies().set('session', sessionResult.sessionId, {
+    const cookieStore = await cookies();
+    cookieStore.set('session', sessionResult.sessionId, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       maxAge: SESSION_DURATION_SECONDS,
@@ -183,7 +185,8 @@ export async function handleRegister(
 }
 
 export async function handleLogout() {
-  const sessionId = cookies().get('session')?.value;
+  const cookieStore = await cookies();
+  const sessionId = cookieStore.get('session')?.value;
   if (sessionId) {
     try {
       const client = await clientPromise;
@@ -193,7 +196,7 @@ export async function handleLogout() {
       console.error("Failed to delete session from DB:", error);
     }
   }
-  cookies().delete('session');
+  cookieStore.delete('session');
   redirect('/');
 }
 
@@ -366,21 +369,6 @@ export async function getFavoriteServers({ page = 1, limit = 6 }: { page?: numbe
   }
 }
 
-
-export async function getServerById(serverId: string): Promise<Server | null> {
-  const user = await getCurrentUser();
-  if (!user) return null;
-  const server = await getServerByIdHelper(serverId, user._id);
-
-  if (!server) return null;
-
-  // Enrich with current user's permission
-  server.userPermission = await getUserPermission(server, user);
-
-  return server;
-}
-
-
 const AddServerSchema = ServerSchema.omit({ ownerId: true, guestIds: true });
 
 export async function addServer(
@@ -449,7 +437,7 @@ export async function updateServer(
   
   const { serverId, ...serverData } = validatedFields.data;
 
-  const server = await getServerByIdHelper(serverId, user._id);
+  const server = await getServerById(serverId);
   if (!server) return { error: "Server not found." };
   
   const hasPermission = await canUser(server, Permission.ADMIN, user);
@@ -501,7 +489,7 @@ export async function deleteServer(serverId: string) {
     const client = await clientPromise;
     const db = client.db();
     
-    const serverToDelete = await getServerByIdHelper(serverId, user._id);
+    const serverToDelete = await getServerById(serverId);
     if (!serverToDelete) {
       return { error: "Server not found." };
     }
@@ -534,7 +522,7 @@ export async function testServerConnection(serverId: string): Promise<{ success:
     const user = await getCurrentUser();
     if (!user) return { success: false, error: 'Authentication failed. Please log in again.' };
 
-    const server = await getServerByIdHelper(serverId, user._id);
+    const server = await getServerById(serverId);
     if (!server) return { success: false, error: 'Server not found or you do not have permission.' };
     
     const hasPermission = await canUser(server, Permission.EXECUTE, user);
@@ -584,7 +572,7 @@ export async function getServerPrivateKey(serverId: string): Promise<{error?: st
   
   if (!ObjectId.isValid(serverId)) return { error: "Invalid server ID." };
 
-  const server = await getServerByIdHelper(serverId, user._id);
+  const server = await getServerById(serverId);
   if (!server) return { error: "Server not found or you do not have permission to download the key." };
 
   const hasPermission = await canUser(server, Permission.ADMIN, user);
@@ -713,13 +701,15 @@ export async function getUserForProfile(): Promise<User | null> {
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
+        roles: user.roles,
+        favorites: user.favorites,
     };
 }
 
 // Notification Actions
 
 export async function createNotification(
-    userId: string,
+    userId: string | ObjectId,
     message: string,
     type: NotificationType,
     link?: string
@@ -836,7 +826,7 @@ export async function getServerMetrics(serverId: string) {
     const user = await getCurrentUser();
     if (!user) return { error: 'Authentication failed. Please log in again.' };
 
-    const server = await getServerByIdHelper(serverId, user._id);
+    const server = await getServerById(serverId);
     if (!server) return { error: 'Server not found or you do not have permission.' };
     
     const hasPermission = await canUser(server, Permission.EXECUTE, user);
@@ -852,7 +842,7 @@ export async function getServerMetrics(serverId: string) {
             let output = '';
 
             conn.on('ready', () => {
-                conn.exec(command, (err, stream) => {
+                conn.exec(command, (err:any, stream:any) => {
                     if (err) {
                         conn.end();
                         return resolve({ error: `Execution error: ${err.message}` });
@@ -1040,7 +1030,7 @@ export async function handleInvitation(token: string, action: 'accept' | 'declin
  * Gets the currently logged-in user from the session cookie.
  */
 export async function getCurrentUser(): Promise<User | null> {
-    const cookieStore = cookies();
+    const cookieStore = await cookies();
     const sessionId = cookieStore.get('session')?.value;
     if (!sessionId) return null;
 
@@ -1105,7 +1095,7 @@ export async function leaveSharedServer(serverId: string) {
         // Remove guest from server's guestIds array
         const updateResult = await db.collection('servers').updateOne(
             { _id: serverObjectId },
-            { $pull: { guestIds: guestUserObjectId } }
+            { $pull: { guestIds: new ObjectId(guestUser._id) } }
         );
 
         if (updateResult.modifiedCount === 0) {
@@ -1339,4 +1329,41 @@ This email was automatically generated by the Remote Commander application.
         console.error("Failed to send support email:", error);
         return { error: "There was an issue sending your message. Please try again." };
     }
+}
+
+
+export async function getServerById(serverId: string): Promise<Server | null> {
+  const user = await getCurrentUser();
+  if (!user) return null;
+  
+  if (!ObjectId.isValid(serverId)) return null;
+
+  const serverObjectId = new ObjectId(serverId);
+  const userObjectId = new ObjectId(user._id);
+
+  try {
+    const client = await clientPromise;
+    const db = client.db();
+    
+    const userIsAdmin = (user.roles as string[])?.includes('admin');
+
+    const server = await db.collection('servers').findOne({ _id: serverObjectId });
+    if (!server) return null;
+
+    // Now check permissions
+    const isOwner = server.ownerId.equals(userObjectId);
+    const isGuest = server.guestIds?.some((guestId: ObjectId) => guestId.equals(userObjectId));
+    
+    if (!userIsAdmin && !isOwner && !isGuest) {
+      return null; // No access
+    }
+
+    const serverDoc = server as any;
+    const serverData = JSON.parse(JSON.stringify(serverDoc));
+    return { ...serverData, id: serverData._id.toString() };
+
+  } catch (error) {
+    console.error("Failed to fetch server:", error);
+    return null;
+  }
 }
