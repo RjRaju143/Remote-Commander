@@ -15,14 +15,17 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Terminal, Server, Settings, LogOut, Users, LifeBuoy, Star } from "lucide-react";
+import { Terminal, Server, Settings, LogOut, Users, LifeBuoy, Star, Mail } from "lucide-react";
 import { handleLogout } from "@/lib/actions";
 import type { User } from "@/models/User";
+import { useEffect, useState } from "react";
+import { getReceivedInvitations } from "@/lib/invitations";
 
 const menuItems = [
   { href: "/dashboard", label: "Servers", icon: Server },
   { href: "/dashboard/favorites", label: "Favorites", icon: Star },
   { href: "/dashboard/guests", label: "Guests", icon: Users },
+  { href: "/dashboard/invitations", label: "Invitations", icon: Mail, notification: true },
   { href: "/dashboard/support", label: "Support", icon: LifeBuoy },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
@@ -37,6 +40,15 @@ export function DashboardSidebar({ user }: DashboardSidebarProps) {
   const userName = user?.email?.split('@')[0] || 'User';
   const userEmail = user?.email || 'No email found';
   const avatarFallback = userName.charAt(0).toUpperCase();
+  const [invitationCount, setInvitationCount] = useState(0);
+
+  useEffect(() => {
+    async function fetchInvites() {
+        const invites = await getReceivedInvitations();
+        setInvitationCount(invites.length);
+    }
+    fetchInvites();
+  }, [pathname]);
 
   return (
     <Sidebar>
@@ -63,9 +75,14 @@ export function DashboardSidebar({ user }: DashboardSidebarProps) {
                   }}
                   asChild
                 >
-                  <div>
+                  <div className="relative">
                     <item.icon className="size-5" />
                     <span>{item.label}</span>
+                     {item.notification && invitationCount > 0 && (
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-xs text-destructive-foreground">
+                            {invitationCount}
+                        </span>
+                     )}
                   </div>
                 </SidebarMenuButton>
               </Link>

@@ -3,7 +3,7 @@ import clientPromise from "./mongodb";
 import { ObjectId } from "mongodb";
 import CryptoJS from "crypto-js";
 import type { Server } from "./types";
-// import { verifyJwt } from "./jwt";
+import { isUserAdmin } from "./auth";
 
 
 export async function getServerById(serverId: string, userId: string | null): Promise<Server | null> {
@@ -18,15 +18,21 @@ export async function getServerById(serverId: string, userId: string | null): Pr
     const client = await clientPromise;
     const db = client.db();
 
-    // Find the server and check if the current user is either the owner or in the guestIds array
-    const server = await db.collection('servers').findOne({ 
-        _id: serverObjectId,
-        $or: [
-          { ownerId: userObjectId },
-          { guestIds: userObjectId }
-        ]
-    });
+    const user = await db.collection('users').findOne({ _id: userObjectId });
+    if (!user) return null;
+    
+    const userIsAdmin = (user.roles as string[])?.includes('admin');
+
+    const server = await db.collection('servers').findOne({ _id: serverObjectId });
     if (!server) return null;
+
+    // Now check permissions
+    const isOwner = server.ownerId.equals(userObjectId);
+    const isGuest = server.guestIds?.some((guestId: ObjectId) => guestId.equals(userObjectId));
+    
+    if (!userIsAdmin && !isOwner && !isGuest) {
+      return null; // No access
+    }
 
     const serverDoc = server as any;
     const serverData = JSON.parse(JSON.stringify(serverDoc));

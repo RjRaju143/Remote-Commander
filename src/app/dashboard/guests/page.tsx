@@ -1,4 +1,5 @@
-import { getGuestAccessDetails } from "@/lib/actions";
+
+import { getSentInvitations } from "@/lib/invitations";
 import {
   Card,
   CardContent,
@@ -6,12 +7,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Server, Users } from "lucide-react";
+import { Users } from "lucide-react";
 import { GuestList } from "@/components/dashboard/guest-list";
 
 export default async function GuestsPage() {
-  const guestDetails = await getGuestAccessDetails();
+  const rawInvitations = await getSentInvitations();
+  // Properly serialize the data before passing it to the client component
+  const invitations = JSON.parse(JSON.stringify(rawInvitations));
 
   return (
     <div className="space-y-8">
@@ -20,12 +22,12 @@ export default async function GuestsPage() {
           Guest Management
         </h1>
         <p className="text-muted-foreground">
-          View and manage users who have access to your servers.
+          View and manage users who you have invited to access your servers.
         </p>
       </div>
 
-      {guestDetails.length > 0 ? (
-        <GuestList initialGuestDetails={guestDetails} />
+      {invitations.length > 0 ? (
+        <GuestList initialInvitations={invitations} />
       ) : (
         <Card className="flex flex-col items-center justify-center p-8 text-center">
             <CardHeader>

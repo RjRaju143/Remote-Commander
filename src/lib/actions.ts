@@ -18,6 +18,9 @@ import { NotificationModel, NotificationSchema, NotificationType } from "@/model
 import { decrypt, encrypt, getServerById as getServerByIdHelper } from "./server-helpers";
 import { verifyJwt } from "./jwt";
 import { getServerMetricsCommand } from "@/ai/flows/get-server-metrics";
+import { canUser, isUserAdmin, getUserPermission } from "./auth";
+import { getInvitationByToken } from "./invitations";
+import { Permission } from "./types";
 
 export interface GenerateCommandState {
   result?: any;
@@ -28,6 +31,8 @@ export interface GenerateCommandState {
 export interface AuthState {
   error?: string;
   success?: boolean;
+  message?: string;
+  notification?: boolean;
 }
 
 const LoginSchema = z.object({
@@ -71,7 +76,7 @@ export async function handleLogin(
     }
 
     const token = jwt.sign(
-      { userId: user._id.toString(), email: user.email },
+      { userId: user._id.toString(), email: user.email, roles: user.roles || ['user'] },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -136,10 +141,11 @@ export async function handleRegister(
       firstName,
       lastName,
       favorites: [],
+      roles: ['user'], // Default role
     });
-
+    
     const token = jwt.sign(
-      { userId: result.insertedId.toString(), email },
+      { userId: result.insertedId.toString(), email, roles: ['user'] },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -176,11 +182,11 @@ export async function getServers({ page = 1, limit = 6, noSort = false }: { page
     const client = await clientPromise;
     const db = client.db();
     const userObjectId = new ObjectId(user._id);
-
-    const skip = (page - 1) * limit;
-
+    
+    const userIsAdmin = isUserAdmin(user);
+    
     const matchStage = { 
-        $match: { 
+        $match: userIsAdmin ? {} : { // Admins see all servers
           $or: [
             { ownerId: userObjectId }, 
             { guestIds: userObjectId }
@@ -214,6 +220,8 @@ export async function getServers({ page = 1, limit = 6, noSort = false }: { page
     } else {
       serversPipeline.push({ $sort: { name: 1 } });
     }
+    
+    const skip = (page - 1) * limit;
 
     serversPipeline.push({ $skip: skip });
     serversPipeline.push({ $limit: limit });
@@ -264,25 +272,26 @@ export async function getFavoriteServers({ page = 1, limit = 6 }: { page?: numbe
   try {
     const client = await clientPromise;
     const db = client.db();
-    const userObjectId = new ObjectId(user._id);
     const favoriteIds = user.favorites.map(id => new ObjectId(id));
-
-    const skip = (page - 1) * limit;
+    
+    const userIsAdmin = isUserAdmin(user);
 
     const matchStage = {
       $match: {
         _id: { $in: favoriteIds },
-        $or: [
-          { ownerId: userObjectId },
-          { guestIds: userObjectId }
-        ]
+        ...(userIsAdmin ? {} : { // Admin can see any favorite, others must have permission
+             $or: [
+              { ownerId: new ObjectId(user._id) },
+              { guestIds: new ObjectId(user._id) }
+            ]
+        })
       }
     };
     
     const serversPipeline = [
       matchStage,
       { $sort: { name: 1 } },
-      { $skip: skip },
+      { $skip: (page - 1) * limit },
       { $limit: limit },
       {
         $lookup: {
@@ -336,18 +345,29 @@ export async function getFavoriteServers({ page = 1, limit = 6 }: { page?: numbe
 export async function getServerById(serverId: string): Promise<Server | null> {
   const user = await getCurrentUser();
   if (!user) return null;
-  return getServerByIdHelper(serverId, user._id);
+  const server = await getServerByIdHelper(serverId, user._id);
+
+  if (!server) return null;
+
+  // Enrich with current user's permission
+  server.userPermission = await getUserPermission(server, user);
+
+  return server;
 }
 
 
+const AddServerSchema = ServerSchema.omit({ ownerId: true, guestIds: true });
 
-export async function addServer(serverData: unknown) {
+export async function addServer(
+  prevState: AuthState | undefined,
+  formData: FormData
+): Promise<AuthState> {
   const user = await getCurrentUser();
   if (!user) {
     return { error: "You must be logged in to add a server." };
   }
-
-  const validatedServer = ServerSchema.safeParse(serverData);
+  
+  const validatedServer = AddServerSchema.safeParse(Object.fromEntries(formData.entries()));
   if (!validatedServer.success) {
     const firstError = validatedServer.error.errors[0]?.message;
     return { error: firstError || "Invalid server data." };
@@ -385,58 +405,38 @@ export async function addServer(serverData: unknown) {
   }
 }
 
+const UpdateServerSchema = ServerSchema.partial().extend({
+    serverId: z.string().refine((id) => ObjectId.isValid(id)),
+});
 
+export async function updateServer(
+    prevState: AuthState | undefined,
+    formData: FormData
+): Promise<AuthState> {
+  const user = await getCurrentUser();
+  if (!user) return { error: "You must be logged in." };
+  
+  const validatedFields = UpdateServerSchema.safeParse(Object.fromEntries(formData.entries()));
 
-export async function getCurrentUser(): Promise<User | null> {
-  const cookieStore = await cookies()
-    const token = cookieStore.get('session')?.value;
-    if (!token) return null;
-
-    const decoded = await verifyJwt(token);
-    if (!decoded || !decoded.userId) return null;
-    
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-        const user = await db.collection('users').findOne(
-            { _id: new ObjectId(decoded.userId as string) },
-        );
-        if (!user) {
-            return null;
-        }
-        
-        const plainUser = JSON.parse(JSON.stringify(user));
-        plainUser._id = plainUser._id.toString();
-        // Ensure favorites is an array even if it's missing
-        plainUser.favorites = plainUser.favorites?.map((id: ObjectId | string) => id.toString()) || [];
-
-        return plainUser;
-    } catch (error) {
-        console.error('Failed to fetch user:', error);
-        return null;
-    }
-}
-
-export async function updateServer(serverId: string, serverData: unknown) {
-  const user : any = await getCurrentUser();
-  if (!user) {
-    return { error: "You must be logged in." };
+  if (!validatedFields.success) {
+    return { error: "Invalid server data." };
   }
   
-  if (!ObjectId.isValid(serverId)) {
-    return { error: "Invalid server ID." };
-  }
+  const { serverId, ...serverData } = validatedFields.data;
 
-  const validatedServer = ServerSchema.partial().safeParse(serverData);
-  if (!validatedServer.success) {
-    return { error: "Invalid server data." };
+  const server = await getServerById(serverId);
+  if (!server) return { error: "Server not found." };
+  
+  const hasPermission = await canUser(server, Permission.ADMIN, user);
+  if (!hasPermission) {
+    return { error: "You do not have permission to update this server." };
   }
 
   try {
     const client = await clientPromise;
     const db = client.db();
     
-    const { privateKey, ...serverDetails } = validatedServer.data;
+    const { privateKey, ...serverDetails } = serverData;
     
     const updateDoc: Record<string, any> = { ...serverDetails };
 
@@ -445,15 +445,15 @@ export async function updateServer(serverId: string, serverData: unknown) {
     }
 
     const result = await db.collection("servers").updateOne(
-      { _id: new ObjectId(serverId), ownerId: new ObjectId(user._id) },
+      { _id: new ObjectId(serverId) },
       { $set: updateDoc }
     );
     
     if (result.matchedCount === 0) {
-      return { error: "Server not found or you do not have permission to update it." };
+      return { error: "Server not found." };
     }
     
-    const serverName = validatedServer.data.name || 'the server';
+    const serverName = serverData.name || 'the server';
     await createNotification(user._id, `You updated the server: "${serverName}".`, 'server_added');
 
 
@@ -468,32 +468,29 @@ export async function updateServer(serverId: string, serverData: unknown) {
 
 export async function deleteServer(serverId: string) {
   const user = await getCurrentUser();
-  if (!user) {
-    return { error: "You must be logged in." };
-  }
+  if (!user) return { error: "You must be logged in." };
 
-  if (!ObjectId.isValid(serverId)) {
-    return { error: "Invalid server ID." };
-  }
+  if (!ObjectId.isValid(serverId)) return { error: "Invalid server ID." };
 
   try {
     const client = await clientPromise;
     const db = client.db();
     
-    // Find server first to get name for notification
-    const serverToDelete = await db.collection("servers").findOne({ 
-      _id: new ObjectId(serverId),
-      ownerId: new ObjectId(user._id),
-    });
-
+    const serverToDelete = await getServerById(serverId);
     if (!serverToDelete) {
-      return { error: "Server not found or you do not have permission to delete it." };
+      return { error: "Server not found." };
     }
     
-    const result = await db.collection("servers").deleteOne({ _id: serverToDelete._id });
+    const hasPermission = await canUser(serverToDelete, Permission.ADMIN, user);
+    if (!hasPermission) {
+      return { error: "You do not have permission to delete this server." };
+    }
+
+    // Also delete all invitations associated with this server
+    await db.collection("invitations").deleteMany({ serverId: new ObjectId(serverToDelete.id) });
+    const result = await db.collection("servers").deleteOne({ _id: new ObjectId(serverToDelete.id) });
 
     if (result.deletedCount === 0) {
-      // This case should be rare given the findOne check, but it's good practice
       return { error: "Failed to delete the server after finding it." };
     }
 
@@ -510,18 +507,20 @@ export async function deleteServer(serverId: string) {
 
 export async function testServerConnection(serverId: string): Promise<{ success: boolean; error?: string }> {
     const user = await getCurrentUser();
-    if (!user) {
-        return { success: false, error: 'Authentication failed. Please log in again.' };
-    }
-    const creds = await getServerByIdHelper(serverId, user._id);
-    if (!creds) {
-        return { success: false, error: 'Server not found or you do not have permission.' };
+    if (!user) return { success: false, error: 'Authentication failed. Please log in again.' };
+
+    const server = await getServerById(serverId);
+    if (!server) return { success: false, error: 'Server not found or you do not have permission.' };
+    
+    const hasPermission = await canUser(server, Permission.EXECUTE, user);
+    if (!hasPermission) {
+        return { success: false, error: 'You do not have permission to connect to this server.' };
     }
 
     let privateKey: any;
-    if (creds.privateKey) {
+    if (server.privateKey) {
         try {
-            privateKey = decrypt(creds.privateKey);
+            privateKey = decrypt(server.privateKey);
         } catch (e) {
             return { success: false, error: 'Failed to decrypt private key. It may be corrupted.' };
         }
@@ -545,105 +544,34 @@ export async function testServerConnection(serverId: string): Promise<{ success:
             }
             resolve({ success: false, error: errorMessage });
         }).connect({
-            host: creds.ip,
-            port: Number(creds.port),
-            username: creds.username,
+            host: server.ip,
+            port: Number(server.port),
+            username: server.username,
             privateKey: privateKey,
             readyTimeout: 10000,
         });
     });
 }
 
-// Sharing Actions
-
-export async function shareServer(serverId: string, emailToShareWith: string) {
-  const owner = await getCurrentUser();
-  if (!owner) {
-    return { error: "You must be logged in." };
-  }
-
-  if (!ObjectId.isValid(serverId)) {
-    return { error: "Invalid server ID." };
-  }
-   if (!z.string().email().safeParse(emailToShareWith).success) {
-    return { error: "Invalid email address provided." };
-  }
-
-  if (owner.email === emailToShareWith) {
-    return { error: "You cannot share a server with yourself." };
-  }
-
-  try {
-    const client = await clientPromise;
-    const db = client.db();
-
-    const server = await db.collection('servers').findOne({
-      _id: new ObjectId(serverId),
-      ownerId: new ObjectId(owner._id),
-    });
-
-    if (!server) {
-      return { error: "Server not found or you do not have permission to share it." };
-    }
-
-    const userToShareWith = await db.collection('users').findOne({ email: emailToShareWith });
-    if (!userToShareWith) {
-      return { error: `User with email "${emailToShareWith}" not found.` };
-    }
-    
-    const guestId = new ObjectId(userToShareWith._id);
-
-    // Check if user is already a guest
-    const isAlreadyGuest = (server.guestIds || []).some((id: ObjectId) => id.equals(guestId));
-    if (isAlreadyGuest) {
-        return { error: `This server is already shared with ${emailToShareWith}.` };
-    }
-
-    await db.collection('servers').updateOne(
-        { _id: new ObjectId(serverId) },
-        { $addToSet: { guestIds: guestId } } // Use $addToSet to avoid duplicates
-    );
-    
-    // Create notifications for both owner and guest
-    await createNotification(owner._id, `You shared "${server.name}" with ${emailToShareWith}.`, 'server_shared');
-    await createNotification(userToShareWith._id.toString(), `${owner.email} shared the server "${server.name}" with you.`, 'server_shared', `/dashboard/server/${serverId}`);
-
-    revalidatePath('/dashboard');
-
-    return { success: true, notification: true };
-  } catch (error) {
-    console.error("Failed to share server:", error);
-    return { error: "An unexpected error occurred." };
-  }
-}
-
-
 export async function getServerPrivateKey(serverId: string): Promise<{error?: string; privateKey?: string}> {
   const user = await getCurrentUser();
-  if (!user) {
-    return { error: "You must be logged in." };
-  }
-  if (!ObjectId.isValid(serverId)) {
-    return { error: "Invalid server ID." };
-  }
+  if (!user) return { error: "You must be logged in." };
   
+  if (!ObjectId.isValid(serverId)) return { error: "Invalid server ID." };
+
+  const server = await getServerById(serverId);
+  if (!server) return { error: "Server not found or you do not have permission to download the key." };
+
+  const hasPermission = await canUser(server, Permission.ADMIN, user);
+  if (!hasPermission) {
+    return { error: "You do not have permission to download this key." };
+  }
+
+  if (!server.privateKey) {
+    return { error: "No private key is associated with this server." };
+  }
+
   try {
-    const client = await clientPromise;
-    const db = client.db();
-
-    const server = await db.collection('servers').findOne({ 
-      _id: new ObjectId(serverId),
-      ownerId: new ObjectId(user._id)
-    });
-
-    if (!server) {
-      return { error: "Server not found or you do not have permission to download the key." };
-    }
-
-    if (!server.privateKey) {
-      return { error: "No private key is associated with this server." };
-    }
-
     const decryptedKey = decrypt(server.privateKey);
     return { privateKey: decryptedKey };
 
@@ -651,125 +579,6 @@ export async function getServerPrivateKey(serverId: string): Promise<{error?: st
     console.error('Failed to fetch private key:', error);
     return { error: 'An unexpected error occurred while retrieving the key.' };
   }
-}
-
-// Guest Management Actions
-
-export type GuestAccessDetails = {
-    guestId: string;
-    guestEmail: string;
-    servers: {
-      serverId: string;
-      serverName: string;
-    }[];
-}[];
-
-export async function getGuestAccessDetails(): Promise<GuestAccessDetails> {
-    const owner = await getCurrentUser();
-    if (!owner) {
-        return [];
-    }
-    
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-        const ownerId = new ObjectId(owner._id);
-
-        const servers = await db.collection('servers').find({ ownerId }).toArray();
-
-        if (servers.length === 0) {
-            return [];
-        }
-
-        const guestMap = new Map<string, { guestEmail: string; servers: { serverId: string; serverName: string }[] }>();
-
-        // Get all unique guest IDs from all servers
-        const allGuestIds = servers.reduce((acc, server) => {
-            if (server.guestIds) {
-                acc.push(...server.guestIds);
-            }
-            return acc;
-        }, [] as ObjectId[]);
-        
-        const uniqueGuestIds = [...new Set(allGuestIds.map(id => id.toString()))].map(id => new ObjectId(id));
-        
-        if (uniqueGuestIds.length === 0) {
-            return [];
-        }
-
-        // Fetch all guest user documents in one query
-        const guests = await db.collection('users').find({ _id: { $in: uniqueGuestIds } }).toArray();
-        const guestUserMap = new Map(guests.map(g => [g._id.toString(), g.email]));
-
-
-        // Populate the guestMap
-        for (const server of servers) {
-            if (server.guestIds) {
-                for (const guestId of server.guestIds) {
-                    const guestIdStr = guestId.toString();
-                    const guestEmail = guestUserMap.get(guestIdStr);
-
-                    if (guestEmail) {
-                        if (!guestMap.has(guestIdStr)) {
-                            guestMap.set(guestIdStr, { guestEmail, servers: [] });
-                        }
-                        guestMap.get(guestIdStr)!.servers.push({
-                            serverId: server._id.toString(),
-                            serverName: server.name,
-                        });
-                    }
-                }
-            }
-        }
-
-        return Array.from(guestMap.entries()).map(([guestId, data]) => ({
-            guestId,
-            ...data
-        }));
-
-    } catch (error) {
-        console.error("Failed to get guest access details:", error);
-        return [];
-    }
-}
-
-
-export async function revokeGuestAccess(serverId: string, guestId: string) {
-    const owner = await getCurrentUser();
-    if (!owner) {
-        return { error: "You must be logged in." };
-    }
-
-    if (!ObjectId.isValid(serverId) || !ObjectId.isValid(guestId)) {
-        return { error: "Invalid ID provided." };
-    }
-
-    try {
-        const client = await clientPromise;
-        const db = client.db();
-        const ownerId = new ObjectId(owner._id);
-        const serverObjectId = new ObjectId(serverId);
-        const guestObjectId = new ObjectId(guestId);
-
-        const result = await db.collection('servers').updateOne(
-            { _id: serverObjectId, ownerId: ownerId },
-            { $pull: { guestIds: guestObjectId } as any }
-        );
-
-        if (result.matchedCount === 0) {
-            return { error: "Server not found or you do not have permission to modify it." };
-        }
-        if (result.modifiedCount === 0) {
-            return { error: "Guest not found on this server or access already revoked." };
-        }
-
-        revalidatePath('/dashboard/guests');
-        return { success: true };
-
-    } catch (error) {
-        console.error("Failed to revoke guest access:", error);
-        return { error: "An unexpected error occurred." };
-    }
 }
 
 const ChangePasswordSchema = z.object({
@@ -784,7 +593,7 @@ const ChangePasswordSchema = z.object({
 export async function handleChangePassword(
     prevState: AuthState | undefined,
     formData: FormData
-): Promise<AuthState & { notification?: boolean }> {
+): Promise<AuthState> {
     const user = await getCurrentUser();
     if (!user) {
         return { error: 'You must be logged in.' };
@@ -933,7 +742,7 @@ function escapeHtml(text: string) {
 export async function handleSupportRequest(
     prevState: AuthState | undefined,
     formData: FormData
-): Promise<AuthState & { notification?: boolean }> {
+): Promise<AuthState> {
     const user = await getCurrentUser();
     if (!user || !user.firstName || !user.email) {
       return { error: 'You must be logged in to send a support request.' };
@@ -949,28 +758,47 @@ export async function handleSupportRequest(
     const name = `${user.firstName} ${user.lastName || ''}`.trim();
     const email = user.email;
     
-    const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SENDER_EMAIL } = process.env;
+    // Fetch SMTP settings from DB first
+    const dbClient = await clientPromise;
+    const db = dbClient.db();
+    const smtpSettings = await db.collection('settings').findOne({ key: 'smtp' });
 
-    if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
-        console.error("SMTP environment variables are not set.");
-        return { error: "The application is not configured to send emails. Please contact support directly." };
+    let transporter;
+
+    if (smtpSettings) {
+        transporter = nodemailer.createTransport({
+            host: smtpSettings.host,
+            port: Number(smtpSettings.port),
+            secure: Number(smtpSettings.port) === 465,
+            auth: {
+                user: smtpSettings.user,
+                pass: decrypt(smtpSettings.pass),
+            },
+        });
+    } else {
+        // Fallback to environment variables
+        const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
+
+        if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
+            console.error("SMTP environment variables are not set and no DB config found.");
+            return { error: "The application is not configured to send emails. Please contact an administrator." };
+        }
+        transporter = nodemailer.createTransport({
+            host: SMTP_HOST,
+            port: Number(SMTP_PORT),
+            secure: Number(SMTP_PORT) === 465,
+            auth: { user: SMTP_USER, pass: SMTP_PASS },
+        });
     }
-
-    if (!SENDER_EMAIL) {
-        console.error("SENDER_EMAIL environment variable is not set.");
+    
+    const recipientEmail = smtpSettings?.senderEmail || process.env.SENDER_EMAIL;
+    if (!recipientEmail) {
+        console.error("Recipient email (SENDER_EMAIL) is not configured in DB or .env.");
         return { error: "The application's recipient email is not configured." };
     }
+    
+    const senderUser = smtpSettings?.user || process.env.SMTP_USER;
 
-
-    const transporter = nodemailer.createTransport({
-        host: SMTP_HOST,
-        port: Number(SMTP_PORT),
-        secure: Number(SMTP_PORT) === 465, // true for 465, false for other ports
-        auth: {
-            user: SMTP_USER,
-            pass: SMTP_PASS,
-        },
-    });
 
     try {
         await transporter.verify();
@@ -1038,9 +866,9 @@ This email was automatically generated by the Remote Commander application.
 
     try {
         await transporter.sendMail({
-            from: `"Remote Commander Support" <${SMTP_USER}>`,
+            from: `"Remote Commander Support" <${senderUser}>`,
             replyTo: `"${name}" <${email}>`,
-            to: SENDER_EMAIL,
+            to: recipientEmail,
             subject: `New Support Request from ${name}`,
             text: emailPlainText,
             html: emailHtml,
@@ -1189,12 +1017,14 @@ export async function deleteAllNotifications() {
 
 export async function getServerMetrics(serverId: string) {
     const user = await getCurrentUser();
-    if (!user) {
-        return { error: 'Authentication failed. Please log in again.' };
-    }
-    const creds = await getServerByIdHelper(serverId, user._id);
-    if (!creds) {
-        return { error: 'Server not found or you do not have permission.' };
+    if (!user) return { error: 'Authentication failed. Please log in again.' };
+
+    const server = await getServerById(serverId);
+    if (!server) return { error: 'Server not found or you do not have permission.' };
+    
+    const hasPermission = await canUser(server, Permission.EXECUTE, user);
+    if (!hasPermission) {
+        return { error: 'You do not have permission to execute commands on this server.' };
     }
 
     try {
@@ -1225,14 +1055,253 @@ export async function getServerMetrics(serverId: string) {
             }).on('error', (err: Error) => {
                 resolve({ error: `Connection error: ${err.message}` });
             }).connect({
-                host: creds.ip,
-                port: Number(creds.port),
-                username: creds.username,
-                privateKey: decrypt(creds.privateKey || ''),
+                host: server.ip,
+                port: Number(server.port),
+                username: server.username,
+                privateKey: decrypt(server.privateKey || ''),
                 readyTimeout: 10000,
             });
         });
     } catch (error: any) {
         return { error: `Failed to get metrics command: ${error.message}` };
+    }
+}
+
+
+const SmtpSettingsSchema = z.object({
+  host: z.string().min(1, 'Host is required'),
+  port: z.coerce.number().min(1, 'Port is required'),
+  user: z.string().min(1, 'User is required'),
+  pass: z.string().min(1, 'Password is required'),
+  senderEmail: z.string().email('Invalid sender email'),
+});
+
+export async function saveSmtpSettings(
+    prevState: AuthState | undefined,
+    formData: FormData
+): Promise<AuthState> {
+    const user = await getCurrentUser();
+    if (!user || !isUserAdmin(user)) {
+        return { error: "You do not have permission to modify SMTP settings." };
+    }
+
+    const validatedFields = SmtpSettingsSchema.safeParse(Object.fromEntries(formData.entries()));
+    if (!validatedFields.success) {
+        return { error: validatedFields.error.errors[0].message };
+    }
+
+    const { pass, ...settings } = validatedFields.data;
+    const encryptedPass = encrypt(pass);
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        await db.collection('settings').updateOne(
+            { key: 'smtp' },
+            { $set: { key: 'smtp', ...settings, pass: encryptedPass } },
+            { upsert: true }
+        );
+        revalidatePath('/dashboard/settings');
+        return { success: true, message: "SMTP settings saved successfully." };
+    } catch (error) {
+        console.error("Failed to save SMTP settings:", error);
+        return { error: "Could not save settings to database." };
+    }
+}
+
+export async function getSmtpSettings() {
+    const user = await getCurrentUser();
+    if (!user || !isUserAdmin(user)) return null;
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        const settings = await db.collection('settings').findOne({ key: 'smtp' });
+        if (!settings) return null;
+        
+        const { pass, ...rest } = settings; // Don't send password to client
+        return JSON.parse(JSON.stringify(rest));
+    } catch (error) {
+        console.error("Failed to get SMTP settings:", error);
+        return null;
+    }
+}
+
+export async function deleteSmtpSettings() {
+    const user = await getCurrentUser();
+    if (!user || !isUserAdmin(user)) {
+        return { error: "You do not have permission to delete SMTP settings." };
+    }
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        await db.collection('settings').deleteOne({ key: 'smtp' });
+        revalidatePath('/dashboard/settings');
+        return { success: true };
+    } catch (error) {
+        console.error("Failed to delete SMTP settings:", error);
+        return { error: "Database error." };
+    }
+}
+
+export async function testSmtpConnection(
+    prevState: AuthState | undefined,
+    formData: FormData
+): Promise<AuthState> {
+    const user = await getCurrentUser();
+    if (!user || !isUserAdmin(user)) {
+        return { error: "Unauthorized" };
+    }
+
+    const validatedFields = SmtpSettingsSchema.safeParse(Object.fromEntries(formData.entries()));
+    if (!validatedFields.success) {
+        return { error: "Invalid data." };
+    }
+
+    const settings = validatedFields.data;
+
+    const transporter = nodemailer.createTransport({
+        host: settings.host,
+        port: settings.port,
+        secure: settings.port === 465,
+        auth: {
+            user: settings.user,
+            pass: settings.pass,
+        },
+    });
+
+    try {
+        await transporter.verify();
+        return { success: true, message: "Connection successful!" };
+    } catch (error: any) {
+        return { error: `Connection failed: ${error.message}` };
+    }
+}
+
+export async function handleInvitation(token: string, action: 'accept' | 'decline') {
+    const user = await getCurrentUser();
+    if (!user) return { error: "You must be logged in to respond to an invitation." };
+
+    const db = (await clientPromise).db();
+    const invitation = await db.collection('invitations').findOne({ token, status: 'pending', expiresAt: { $gt: new Date() } });
+
+    if (!invitation) return { error: "This invitation is invalid or has expired." };
+    if (invitation.email !== user.email) return { error: "This invitation is for a different user." };
+    if (invitation.ownerId.toString() === user._id) return { error: "You cannot accept an invitation you sent." };
+
+    if (action === 'decline') {
+        await db.collection('invitations').updateOne({ _id: invitation._id }, { $set: { status: 'declined', recipientId: new ObjectId(user._id) } });
+        return { success: true, message: "You have declined the invitation." };
+    }
+
+    // Accept
+    const result = await db.collection('invitations').findOneAndUpdate(
+        { _id: invitation._id },
+        { $set: { status: 'accepted', recipientId: new ObjectId(user._id) } },
+        { returnDocument: 'after' }
+    );
+    
+    // Add user to the server's guestIds array
+    await db.collection('servers').updateOne(
+        { _id: invitation.serverId },
+        { $addToSet: { guestIds: new ObjectId(user._id) } }
+    );
+    
+    if (result) {
+        await createNotification(invitation.ownerId.toString(), `${user.email} has accepted your invitation to access a server.`, 'server_shared');
+        revalidatePath('/dashboard/guests');
+        revalidatePath('/dashboard');
+        return { success: true, serverId: invitation.serverId.toString() };
+    } else {
+        return { error: 'Failed to accept invitation.' };
+    }
+}
+
+
+/**
+ * Gets the currently logged-in user from the session cookie.
+ */
+export async function getCurrentUser(): Promise<User | null> {
+    const cookieStore = await cookies()
+    const token = cookieStore.get('session')?.value;
+    if (!token) return null;
+
+    const decoded = await verifyJwt(token);
+    if (!decoded || !decoded.userId) return null;
+    
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        const user = await db.collection('users').findOne(
+            { _id: new ObjectId(decoded.userId as string) },
+        );
+        if (!user) {
+            return null;
+        }
+        
+        const plainUser = JSON.parse(JSON.stringify(user));
+        plainUser._id = plainUser._id.toString();
+        // Ensure favorites is an array even if it's missing
+        plainUser.favorites = plainUser.favorites?.map((id: ObjectId | string) => id.toString()) || [];
+        plainUser.roles = plainUser.roles || ['user'];
+
+        return plainUser;
+    } catch (error) {
+        console.error('Failed to fetch user:', error);
+        return null;
+    }
+}
+
+
+export async function leaveSharedServer(serverId: string) {
+    const guestUser = await getCurrentUser();
+    if (!guestUser) {
+        return { error: "You must be logged in." };
+    }
+
+    if (!ObjectId.isValid(serverId)) {
+        return { error: "Invalid server ID." };
+    }
+
+    try {
+        const client = await clientPromise;
+        const db = client.db();
+        const serverObjectId = new ObjectId(serverId);
+        const guestUserObjectId = new ObjectId(guestUser._id);
+        
+        const server = await db.collection('servers').findOne({ _id: serverObjectId });
+        if (!server) {
+            return { error: "The associated server could not be found." };
+        }
+        
+        // Remove guest from server's guestIds array
+        const updateResult = await db.collection('servers').updateOne(
+            { _id: serverObjectId },
+            { $pull: { guestIds: guestUserObjectId } }
+        );
+
+        if (updateResult.modifiedCount === 0) {
+            return { error: "Failed to remove your access. You might not have been a guest on this server." };
+        }
+        
+        // Also update any related invitations to 'revoked' status for clarity
+        await db.collection('invitations').updateMany(
+            { serverId: serverObjectId, recipientId: guestUserObjectId },
+            { $set: { status: 'revoked' } }
+        );
+
+        // Notify the owner
+        await createNotification(
+            server.ownerId.toString(),
+            `Guest ${guestUser.email} has removed their own access from your server: "${server.name}".`,
+            'server_shared'
+        );
+
+        revalidatePath('/dashboard');
+        return { success: true, notification: true };
+    } catch (error) {
+        console.error("Failed to leave server:", error);
+        return { error: "An unexpected error occurred." };
     }
 }

@@ -7,6 +7,11 @@ export async function middleware(request: NextRequest) {
   const sessionToken = request.cookies.get('session')?.value;
   const isAuthPage = request.nextUrl.pathname === '/' || request.nextUrl.pathname.startsWith('/register');
   const isDashboardPage = request.nextUrl.pathname.startsWith('/dashboard');
+  const isInvitationPage = request.nextUrl.pathname.startsWith('/invitation');
+  
+  if (isInvitationPage) {
+    return NextResponse.next();
+  }
 
   if (!sessionToken) {
     if (isDashboardPage) {
@@ -32,6 +37,11 @@ export async function middleware(request: NextRequest) {
 
   // If user is authenticated and tries to access login/register, redirect to dashboard
   if (isAuthPage) {
+    const url = request.nextUrl.clone();
+    const redirectUrl = url.searchParams.get('redirect');
+    if (redirectUrl) {
+      return NextResponse.redirect(new URL(redirectUrl, request.url));
+    }
     return NextResponse.redirect(new URL('/dashboard', request.url));
   }
  

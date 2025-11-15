@@ -5,14 +5,21 @@ import { useState } from "react";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Server, Trash2, User } from "lucide-react";
-import { type GuestAccessDetails, revokeGuestAccess } from "@/lib/actions";
+import { Trash2, Clock, Edit } from "lucide-react";
+import { revokeInvitation } from "@/lib/invitations";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
@@ -24,39 +31,37 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "../ui/badge";
+import { getPermissionBadgeVariant } from "@/lib/utils";
+import type { InvitationWithDetails } from "@/lib/invitations";
+import { formatDistanceToNow } from "date-fns";
+import { EditInvitationDialog } from "./edit-invitation-dialog";
 
-type GuestListProps = {
-  initialGuestDetails: GuestAccessDetails;
-};
 
 type RevokeInfo = {
-  serverId: string;
-  guestId: string;
+  invitationId: string;
   guestEmail: string;
   serverName: string;
 };
 
-export function GuestList({ initialGuestDetails }: GuestListProps) {
-  const [guestDetails, setGuestDetails] = useState(initialGuestDetails);
+export function GuestList({ initialInvitations }: {initialInvitations: InvitationWithDetails[]}) {
+  const [invitations, setInvitations] = useState(initialInvitations);
   const [revokeInfo, setRevokeInfo] = useState<RevokeInfo | null>(null);
+  const [editingInvitation, setEditingInvitation] = useState<InvitationWithDetails | null>(null);
   const { toast } = useToast();
 
   const handleRevokeClick = (
-    serverId: string,
-    guestId: string,
+    invitationId: string,
     guestEmail: string,
     serverName: string
   ) => {
-    setRevokeInfo({ serverId, guestId, guestEmail, serverName });
+    setRevokeInfo({ invitationId, guestEmail, serverName });
   };
 
   const handleRevokeConfirm = async () => {
     if (!revokeInfo) return;
 
-    const result = await revokeGuestAccess(
-      revokeInfo.serverId,
-      revokeInfo.guestId
-    );
+    const result = await revokeInvitation(revokeInfo.invitationId);
 
     if (result.error) {
       toast({
@@ -67,82 +72,126 @@ export function GuestList({ initialGuestDetails }: GuestListProps) {
     } else {
       toast({
         title: "Access Revoked",
-        description: `Access for ${revokeInfo.guestEmail} to ${revokeInfo.serverName} has been revoked.`,
+        description: `Invitation for ${revokeInfo.guestEmail} to ${revokeInfo.serverName} has been revoked.`,
       });
       // Refresh the list optimistically
-      setGuestDetails((currentDetails) =>
-        currentDetails
-          .map((guest) => ({
-            ...guest,
-            servers: guest.servers.filter(
-              (server) =>
-                !(
-                  server.serverId === revokeInfo.serverId &&
-                  guest.guestId === revokeInfo.guestId
-                )
-            ),
-          }))
-          .filter((guest) => guest.servers.length > 0)
+      setInvitations((currentInvitations) =>
+        currentInvitations.filter(
+          (inv) => inv._id.toString() !== revokeInfo.invitationId
+        )
       );
     }
     setRevokeInfo(null);
   };
+  
+  const handleEditOpenChange = (isOpen: boolean) => {
+    if (!isOpen) {
+        setEditingInvitation(null);
+    }
+    // Optimistically update the UI after edit
+    // A full refresh might be better for production to ensure data consistency
+    const updatedInvitations = invitations.map(inv => {
+        if (editingInvitation && inv._id === editingInvitation._id) {
+            // This part is tricky without knowing the new permission.
+            // We'll just close the dialog and the parent will handle re-fetching if needed,
+            // or the user will see the change on next navigation.
+            // For a better UX, the edit action could return the updated invitation.
+        }
+        return inv;
+    });
+    // For now, let's just close it. A better implementation might involve re-fetching.
+  }
+
 
   return (
-    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-      {guestDetails.map((guest) => (
-        <Card key={guest.guestId}>
-          <CardHeader>
-            <div className="flex items-center gap-4">
-              <Avatar>
-                <AvatarFallback>
-                  {guest.guestEmail.charAt(0).toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              <div>
-                <CardTitle className="font-headline text-lg">
-                  {guest.guestEmail}
-                </CardTitle>
-                <CardDescription>
-                  Guest User
-                </CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <h4 className="mb-2 font-semibold text-sm">Server Access:</h4>
-            <ul className="space-y-2">
-              {guest.servers.map((server) => (
-                <li
-                  key={server.serverId}
-                  className="flex items-center justify-between text-sm"
-                >
-                  <div className="flex items-center gap-2">
-                    <Server className="text-muted-foreground" />
-                    <span>{server.serverName}</span>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() =>
-                      handleRevokeClick(
-                        server.serverId,
-                        guest.guestId,
-                        guest.guestEmail,
-                        server.serverName
-                      )
-                    }
-                  >
-                    <Trash2 className="mr-2" />
-                    Revoke
-                  </Button>
-                </li>
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>Sent Invitations</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Guest</TableHead>
+                <TableHead>Server</TableHead>
+                <TableHead>Permission</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Invited</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {invitations.map((inv) => (
+                <TableRow key={inv._id}>
+                  <TableCell>
+                    <div className="flex items-center gap-3">
+                      <Avatar className="size-8">
+                        <AvatarFallback>{inv.email.charAt(0).toUpperCase()}</AvatarFallback>
+                      </Avatar>
+                      <span className="font-medium">{inv.email}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell>{inv.server.name}</TableCell>
+                  <TableCell>
+                    <Badge variant={getPermissionBadgeVariant(inv.permission)}>{inv.permission}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    {inv.status === 'pending' ? (
+                       <Badge variant="outline" className="w-fit">
+                          <Clock className="mr-1 h-3 w-3" />
+                          Pending
+                       </Badge>
+                    ) : (
+                       <Badge variant="secondary">{inv.status.charAt(0).toUpperCase() + inv.status.slice(1)}</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {formatDistanceToNow(new Date(inv.createdAt), { addSuffix: true })}
+                  </TableCell>
+                  <TableCell className="text-right space-x-2">
+                     <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEditingInvitation(inv)}
+                      disabled={inv.status === 'revoked' || inv.status === 'declined'}
+                    >
+                      <Edit className="size-4" />
+                      <span className="sr-only">Edit</span>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => handleRevokeClick(inv._id.toString(), inv.email, inv.server.name)}
+                    >
+                      <Trash2 className="size-4" />
+                      <span className="sr-only">Revoke</span>
+                    </Button>
+                  </TableCell>
+                </TableRow>
               ))}
-            </ul>
-          </CardContent>
-        </Card>
-      ))}
+               {invitations.length === 0 && (
+                <TableRow>
+                    <TableCell colSpan={6} className="text-center h-24 text-muted-foreground">
+                        No guests have been invited yet.
+                    </TableCell>
+                </TableRow>
+               )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+      
+      {editingInvitation && (
+        <EditInvitationDialog
+            invitation={editingInvitation}
+            open={!!editingInvitation}
+            onOpenChange={(isOpen) => {
+                if (!isOpen) setEditingInvitation(null);
+            }}
+        />
+      )}
 
       <AlertDialog
         open={!!revokeInfo}
@@ -152,11 +201,10 @@ export function GuestList({ initialGuestDetails }: GuestListProps) {
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will revoke{" "}
-              <span className="font-bold">{revokeInfo?.guestEmail}</span>'s
-              access to the server{" "}
-              <span className="font-bold">{revokeInfo?.serverName}</span>. They
-              will no longer be able to connect to it.
+              This will revoke the invitation for{" "}
+              <span className="font-bold">{revokeInfo?.guestEmail}</span>
+              {' '}to access the server{" "}
+              <span className="font-bold">{revokeInfo?.serverName}</span>. If they have already accepted, their access will be removed.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -170,6 +218,6 @@ export function GuestList({ initialGuestDetails }: GuestListProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </>
   );
 }

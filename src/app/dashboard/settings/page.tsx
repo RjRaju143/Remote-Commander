@@ -19,6 +19,7 @@ function ChangePasswordForm() {
     const [showCurrent, setShowCurrent] = useState(false);
     const [showNew, setShowNew] = useState(false);
     const [showConfirm, setShowConfirm] = useState(false);
+    const formRef = useRef<HTMLFormElement>(null);
 
     useEffect(() => {
         if (state?.error) {
@@ -36,15 +37,12 @@ function ChangePasswordForm() {
             if (state.notification) {
                 notify();
             }
-            // This is a simple way to reset form fields after successful submission with useActionState
-            // by targeting the form element and calling reset().
-            const form = document.getElementById('changePasswordForm') as HTMLFormElement;
-            form?.reset();
+            formRef.current?.reset();
         }
     }, [state, toast, notify]);
 
     return (
-        <form action={formAction} id="changePasswordForm">
+        <form action={formAction} ref={formRef}>
             <CardContent className="space-y-4 pt-6">
                  <CardDescription>Update your password here. It's recommended to use a strong, unique password.</CardDescription>
                 <div className="space-y-2">

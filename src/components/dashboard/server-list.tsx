@@ -1,15 +1,17 @@
 
 
-"use client";
+
+
+'use client';
 
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { Server } from "@/lib/types";
-import { HardDrive, MoreVertical, PlusCircle, Wifi, WifiOff, Edit, Trash2, Terminal, Loader2, Users, User, Share2, Cpu, MemoryStick, Database, RefreshCcw, Star } from "lucide-react";
+import { HardDrive, MoreVertical, PlusCircle, Wifi, WifiOff, Edit, Trash2, Terminal, Loader2, Users, User, Share2, Cpu, MemoryStick, Database, RefreshCcw, Star, Eye, LogOut } from "lucide-react";
 import { AddServerDialog } from "./add-server-dialog";
-import { useEffect, useState, useMemo, useCallback, useTransition } from "react";
-import { getServers, deleteServer, getCurrentUser, toggleFavoriteServer, getFavoriteServers } from "@/lib/actions";
+import { useEffect, useState, useCallback, useTransition, useRef } from "react";
+import { getServers, deleteServer, toggleFavoriteServer, getFavoriteServers, getCurrentUser, leaveSharedServer } from "@/lib/actions";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,9 +34,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ShareDialog } from "./share-dialog";
 import type { User as CurrentUser } from "@/models/User";
-import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
+import { canUser } from "@/lib/auth";
+import { Permission } from "@/lib/types";
 
 
 type ServerWithHealth = Server & { 
@@ -53,6 +56,7 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
   const [editingServer, setEditingServer] = useState<Server | null>(null);
   const [sharingServer, setSharingServer] = useState<Server | null>(null);
   const [deletingServerId, setDeletingServerId] = useState<string | null>(null);
+  const [leavingServer, setLeavingServer] = useState<Server | null>(null);
   const [isPending, startTransition] = useTransition();
   const { toast, notify } = useToast();
   const router = useRouter();
@@ -60,18 +64,39 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
   const totalPages = Math.ceil(totalServers / SERVERS_PER_PAGE);
 
   const fetchServersAndUser = useCallback(async () => {
+    const user = await getCurrentUser();
+    setCurrentUser(user);
+
+    if (!user) return;
+
     let serversResponse;
     if (showOnlyFavorites) {
         serversResponse = await getFavoriteServers({ page: currentPage, limit: SERVERS_PER_PAGE });
     } else {
         serversResponse = await getServers({ page: currentPage, limit: SERVERS_PER_PAGE });
     }
-    const user = await getCurrentUser();
+    
+    // Enrich server data with permissions for the current user
+    const formattedServers = await Promise.all(serversResponse.servers.map(async (s: any) => {
+        let userPermission = Permission.NONE;
+        if (s.ownerId === user._id) {
+            userPermission = Permission.ADMIN;
+        } else {
+             userPermission = await canUser(s, Permission.READ, user) ? Permission.READ : Permission.NONE;
+             if (await canUser(s, Permission.EXECUTE, user)) userPermission = Permission.EXECUTE;
+             if (await canUser(s, Permission.ADMIN, user)) userPermission = Permission.ADMIN;
+        }
 
-    const formattedServers = serversResponse.servers.map((s: any) => ({ ...s, id: s._id.toString(), status: s.status || 'inactive' }));
+        return { 
+            ...s, 
+            id: s._id.toString(), 
+            status: s.status || 'inactive',
+            userPermission: userPermission,
+        }
+    }));
+
     setServers(formattedServers);
     setTotalServers(serversResponse.total);
-    setCurrentUser(user);
   }, [currentPage, showOnlyFavorites]);
 
   useEffect(() => {
@@ -137,6 +162,26 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
     setDeletingServerId(null);
   };
 
+  const handleLeave = async () => {
+    if (!leavingServer) return;
+    const result = await leaveSharedServer(leavingServer.id);
+     if (result.error) {
+      toast({ variant: "destructive", title: "Error", description: result.error });
+    } else {
+      toast({ title: "Success", description: `You have left the server: ${leavingServer.name}.` });
+      if (result.notification) {
+          notify();
+      }
+      // Reset to page 1 and re-fetch, this handles removing last item on a page
+       if (currentPage > 1 && servers.length === 1) {
+            setCurrentPage(currentPage - 1);
+        } else {
+            fetchServersAndUser();
+        }
+    }
+    setLeavingServer(null);
+  }
+
   const handleConnect = (serverId: string) => {
     setServers(currentServers => 
       currentServers.map(s => 
@@ -146,6 +191,28 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
     router.push(`/dashboard/server/${serverId}`);
   };
 
+  const handleAddServerOpenChange = useCallback((isOpen: boolean) => {
+    setAddDialogOpen(isOpen);
+    if (!isOpen) {
+      fetchServersAndUser();
+    }
+  }, [fetchServersAndUser]);
+
+  const handleEditServerOpenChange = useCallback((isOpen: boolean) => {
+    if (!isOpen) {
+        setEditingServer(null);
+        fetchServersAndUser();
+    }
+  }, [fetchServersAndUser]);
+  
+  const handleShareServerOpenChange = useCallback((isOpen: boolean) => {
+    if (!isOpen) {
+        setSharingServer(null);
+        fetchServersAndUser();
+    }
+  }, [fetchServersAndUser]);
+
+
   return (
     <section>
       {!showOnlyFavorites && (
@@ -153,10 +220,7 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
             <h2 className="text-2xl font-semibold font-headline">Your Servers</h2>
             <AddServerDialog 
             open={isAddDialogOpen} 
-            onOpenChange={(isOpen) => {
-                setAddDialogOpen(isOpen);
-                if (!isOpen) fetchServersAndUser();
-            }}
+            onOpenChange={handleAddServerOpenChange}
             >
             <Button>
                 <PlusCircle />
@@ -169,6 +233,8 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {servers.map((server) => {
           const isOwner = server.ownerId === currentUser?._id;
+          const hasAdminAccess = server.userPermission === Permission.ADMIN;
+          const hasExecuteAccess = server.userPermission === Permission.EXECUTE || hasAdminAccess;
           const isFavorite = currentUser?.favorites?.includes(server.id!);
 
           return (
@@ -213,20 +279,38 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
                         </DropdownMenuItem>
                       </>
                     ) : (
-                       <DropdownMenuItem disabled>
-                         <User className="mr-2 h-4 w-4" />
-                         <span>Guest Access</span>
+                       <DropdownMenuItem onSelect={() => setLeavingServer(server)} className="text-destructive">
+                         <LogOut className="mr-2 h-4 w-4" />
+                         <span>Leave Server</span>
                       </DropdownMenuItem>
                     )}
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
             </CardHeader>
+            <CardContent className="flex-grow">
+               <div className="space-y-3 text-sm text-muted-foreground">
+                    {!isOwner && server.owner && (
+                        <div className="flex items-center gap-2">
+                            <User className="text-primary"/>
+                            <span>Shared by {server.owner.email}</span>
+                        </div>
+                    )}
+                </div>
+            </CardContent>
             <CardFooter>
-               <Button className="w-full" onClick={() => handleConnect(server.id!)} disabled={server.status === 'connecting'}>
-                  {server.status === 'connecting' ? <Loader2 className="animate-spin" /> : <Terminal />}
-                  {server.status === 'connecting' ? 'Connecting...' : 'Connect'}
-                </Button>
+               {hasExecuteAccess ? (
+                    <Button className="w-full" onClick={() => handleConnect(server.id!)} disabled={server.status === 'connecting'}>
+                        {server.status === 'connecting' ? <Loader2 className="animate-spin" /> : <Terminal />}
+                        {server.status === 'connecting' ? 'Connecting...' : 'Connect'}
+                    </Button>
+               ) : (
+                    <Button asChild className="w-full" variant="secondary">
+                        <Link href={`/dashboard/server/${server.id!}`}>
+                            <Eye /> View Details
+                        </Link>
+                    </Button>
+               )}
             </CardFooter>
           </Card>
         )})}
@@ -288,10 +372,7 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
           currentUser={currentUser}
           open={!!editingServer}
           onOpenChange={(isOpen) => {
-            if (!isOpen) {
-              setEditingServer(null);
-              fetchServersAndUser();
-            }
+              if(!isOpen) setEditingServer(null)
           }}
         />
       )}
@@ -301,10 +382,8 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
             server={sharingServer}
             open={!!sharingServer}
             onOpenChange={(isOpen) => {
-                if (!isOpen) {
-                    setSharingServer(null);
-                }
-            }}
+              if(!isOpen) setSharingServer(null)
+          }}
         />
        )}
       
@@ -324,8 +403,23 @@ export function ServerList({ showOnlyFavorites = false }: { showOnlyFavorites?: 
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog open={!!leavingServer} onOpenChange={(isOpen) => !isOpen && setLeavingServer(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Leave Server?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to remove <span className="font-bold">{leavingServer?.name}</span> from your server list? This will revoke your access.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleLeave} className="bg-destructive hover:bg-destructive/90">
+              Leave
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }
-
-    
