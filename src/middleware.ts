@@ -2,6 +2,9 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import clientPromise from './lib/mongodb';
+
+// This line is crucial to switch the runtime environment
+export const runtime = 'nodejs';
  
 export async function middleware(request: NextRequest) {
   const sessionId = request.cookies.get('session')?.value;
