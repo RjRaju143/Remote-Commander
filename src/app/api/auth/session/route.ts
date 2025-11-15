@@ -1,6 +1,4 @@
 // src/app/api/auth/session/route.ts
-'use server';
-
 export const runtime = 'nodejs';
 
 import { NextRequest, NextResponse } from 'next/server';
