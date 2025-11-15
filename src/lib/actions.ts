@@ -1,4 +1,3 @@
-
 'use server';
 
 import { z } from "zod";
@@ -59,14 +58,7 @@ async function createSession(userId: string) {
     // Now, ensure the TTL index exists. This is idempotent.
     await sessionCollection.createIndex({ "expiresAt": 1 }, { expireAfterSeconds: 0 });
 
-    cookies().set('session', sessionId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      maxAge: SESSION_DURATION_SECONDS,
-      path: '/',
-    });
-    
-    return { success: true };
+    return { success: true, sessionId };
   } catch (error) {
     console.error("Session creation failed:", error);
     return { success: false, error: "Could not create a session." };
@@ -104,9 +96,16 @@ export async function handleLogin(
     }
 
     const sessionResult = await createSession(user._id.toString());
-    if (!sessionResult.success) {
+    if (!sessionResult.success || !sessionResult.sessionId) {
       return { error: sessionResult.error };
     }
+    
+    cookies().set('session', sessionResult.sessionId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: SESSION_DURATION_SECONDS,
+      path: '/',
+    });
     
     return { success: true };
   } catch (error) {
@@ -164,9 +163,16 @@ export async function handleRegister(
     });
     
     const sessionResult = await createSession(result.insertedId.toString());
-    if (!sessionResult.success) {
+    if (!sessionResult.success || !sessionResult.sessionId) {
       return { error: sessionResult.error };
     }
+
+    cookies().set('session', sessionResult.sessionId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: SESSION_DURATION_SECONDS,
+      path: '/',
+    });
 
     return { success: true };
   } catch (error) {

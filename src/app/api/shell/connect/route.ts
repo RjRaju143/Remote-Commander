@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: 'Server ID is required' }, { status: 400 });
   }
 
-  const serverCreds = await getServerById(serverId, userId);
+  const serverCreds = await getServerById(serverId);
   if (!serverCreds) {
     return NextResponse.json({ message: 'Server not found or permission denied' }, { status: 404 });
   }
