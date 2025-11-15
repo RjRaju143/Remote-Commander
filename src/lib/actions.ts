@@ -100,7 +100,8 @@ export async function handleLogin(
       return { error: sessionResult.error };
     }
     
-    cookies().set('session', sessionResult.sessionId, {
+    const cookieStore = await cookies();
+    cookieStore.set('session', sessionResult.sessionId, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       maxAge: SESSION_DURATION_SECONDS,
@@ -167,7 +168,8 @@ export async function handleRegister(
       return { error: sessionResult.error };
     }
 
-    cookies().set('session', sessionResult.sessionId, {
+    const cookieStore = await cookies();
+    cookieStore.set('session', sessionResult.sessionId, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       maxAge: SESSION_DURATION_SECONDS,
@@ -182,7 +184,8 @@ export async function handleRegister(
 }
 
 export async function handleLogout() {
-  const sessionId = cookies().get('session')?.value;
+  const cookieStore = await cookies();
+  const sessionId = cookieStore.get('session')?.value;
   if (sessionId) {
     try {
       const client = await clientPromise;
@@ -192,7 +195,7 @@ export async function handleLogout() {
       console.error("Failed to delete session from DB:", error);
     }
   }
-  cookies().delete('session');
+  cookieStore.delete('session');
   redirect('/');
 }
 
@@ -1026,7 +1029,7 @@ export async function handleInvitation(token: string, action: 'accept' | 'declin
  * Gets the currently logged-in user from the session cookie.
  */
 export async function getCurrentUser(): Promise<User | null> {
-    const cookieStore = cookies();
+    const cookieStore = await cookies();
     const sessionId = cookieStore.get('session')?.value;
     if (!sessionId) return null;
 
