@@ -2,23 +2,20 @@
 'use server';
 
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyJwt } from '@/lib/jwt';
+import { getCurrentUser } from '@/lib/actions';
 import { getServerById, decrypt } from '@/lib/server-helpers';
 import { Client } from 'ssh2';
 import { randomUUID } from 'crypto';
 import { addSession, deleteSession } from '@/lib/shell-sessions';
+import { canUser } from '@/lib/auth';
+import { Permission } from '@/lib/types';
 
 export async function POST(request: NextRequest) {
-  const sessionToken = request.cookies.get('session')?.value;
-  if (!sessionToken) {
+  const user = await getCurrentUser();
+  if (!user) {
     return NextResponse.json({ message: 'Authentication required' }, { status: 401 });
   }
-
-  const decoded = await verifyJwt(sessionToken);
-  if (!decoded || !decoded.userId) {
-    return NextResponse.json({ message: 'Invalid token' }, { status: 401 });
-  }
-  const userId = decoded.userId as string;
+  const userId = user._id;
 
   const { serverId, cols, rows } = await request.json();
 
@@ -29,6 +26,11 @@ export async function POST(request: NextRequest) {
   const serverCreds = await getServerById(serverId, userId);
   if (!serverCreds) {
     return NextResponse.json({ message: 'Server not found or permission denied' }, { status: 404 });
+  }
+  
+  const hasPermission = await canUser(serverCreds, Permission.EXECUTE, user);
+  if (!hasPermission) {
+    return NextResponse.json({ message: 'Permission denied to execute commands on this server' }, { status: 403 });
   }
 
   const client = new Client();

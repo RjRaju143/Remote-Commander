@@ -3,7 +3,6 @@
 
 import { z } from "zod";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 import clientPromise from "./mongodb";
 import { revalidatePath } from "next/cache";
 import { ServerSchema } from "@/models/Server";
@@ -16,11 +15,11 @@ import { Client } from 'ssh2';
 import nodemailer from 'nodemailer';
 import { NotificationModel, NotificationSchema, NotificationType } from "@/models/Notification";
 import { decrypt, encrypt, getServerById as getServerByIdHelper } from "./server-helpers";
-import { verifyJwt } from "./jwt";
 import { getServerMetricsCommand } from "@/ai/flows/get-server-metrics";
 import { canUser, isUserAdmin, getUserPermission } from "./auth";
 import { getInvitationByToken } from "./invitations";
 import { Permission } from "./types";
+import { randomUUID } from "crypto";
 
 export interface GenerateCommandState {
   result?: any;
@@ -40,9 +39,37 @@ const LoginSchema = z.object({
   password: z.string().min(1, { message: "Password is required." }),
 });
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error("JWT_SECRET environment variable is not set.");
+const SESSION_DURATION_SECONDS = 60 * 60 * 24 * 7; // 7 days
+
+async function createSession(userId: string) {
+  try {
+    const sessionId = randomUUID();
+    const expiresAt = new Date(Date.now() + SESSION_DURATION_SECONDS * 1000);
+
+    const client = await clientPromise;
+    const db = client.db();
+    
+    // Ensure TTL index exists for automatic expiration
+    await db.collection('sessions').createIndex({ "expiresAt": 1 }, { expireAfterSeconds: 0 });
+
+    await db.collection('sessions').insertOne({
+      sessionId,
+      userId: new ObjectId(userId),
+      expiresAt
+    });
+
+    cookies().set('session', sessionId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: SESSION_DURATION_SECONDS,
+      path: '/',
+    });
+    
+    return { success: true };
+  } catch (error) {
+    console.error("Session creation failed:", error);
+    return { success: false, error: "Could not create a session." };
+  }
 }
 
 
@@ -75,20 +102,11 @@ export async function handleLogin(
       return { error: "Invalid email or password." };
     }
 
-    const token = jwt.sign(
-      { userId: user._id.toString(), email: user.email, roles: user.roles || ['user'] },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    const cookieStore = await cookies();
-    cookieStore.set('session', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      maxAge: 60 * 60 * 24 * 7,
-      path: '/',
-    });
-
+    const sessionResult = await createSession(user._id.toString());
+    if (!sessionResult.success) {
+      return { error: sessionResult.error };
+    }
+    
     return { success: true };
   } catch (error) {
     console.error(error);
@@ -144,20 +162,10 @@ export async function handleRegister(
       roles: ['user'], // Default role
     });
     
-    const token = jwt.sign(
-      { userId: result.insertedId.toString(), email, roles: ['user'] },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    const cookieStore = await cookies()
-    cookieStore.set('session', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      maxAge: 60 * 60 * 24 * 7,
-      path: '/',
-    });
-
+    const sessionResult = await createSession(result.insertedId.toString());
+    if (!sessionResult.success) {
+      return { error: sessionResult.error };
+    }
 
     return { success: true };
   } catch (error) {
@@ -167,8 +175,17 @@ export async function handleRegister(
 }
 
 export async function handleLogout() {
-  const cookieStore = await cookies()
-  cookieStore.delete('session');
+  const sessionId = cookies().get('session')?.value;
+  if (sessionId) {
+    try {
+      const client = await clientPromise;
+      const db = client.db();
+      await db.collection('sessions').deleteOne({ sessionId });
+    } catch (error) {
+      console.error("Failed to delete session from DB:", error);
+    }
+  }
+  cookies().delete('session');
   redirect('/');
 }
 
@@ -1223,18 +1240,27 @@ export async function handleInvitation(token: string, action: 'accept' | 'declin
  * Gets the currently logged-in user from the session cookie.
  */
 export async function getCurrentUser(): Promise<User | null> {
-    const cookieStore = await cookies()
-    const token = cookieStore.get('session')?.value;
-    if (!token) return null;
+    const sessionId = cookies().get('session')?.value;
+    if (!sessionId) return null;
 
-    const decoded = await verifyJwt(token);
-    if (!decoded || !decoded.userId) return null;
-    
     try {
         const client = await clientPromise;
         const db = client.db();
+        
+        // Find session and check if it's expired
+        const session = await db.collection('sessions').findOne({ 
+            sessionId: sessionId,
+            expiresAt: { $gt: new Date() }
+        });
+
+        if (!session) {
+            // Clean up expired cookie
+            cookies().delete('session');
+            return null;
+        }
+
         const user = await db.collection('users').findOne(
-            { _id: new ObjectId(decoded.userId as string) },
+            { _id: session.userId },
         );
         if (!user) {
             return null;
