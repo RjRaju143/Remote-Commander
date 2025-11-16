@@ -12,6 +12,7 @@ export const UserSchema = z.object({
   lastName: z.string().optional(),
   favorites: z.array(z.union([z.instanceof(ObjectId), z.string()])).optional(),
   roles: z.array(z.nativeEnum(Role)).optional(),
+  organizationCompleted: z.boolean().optional(),
 });
 
 export type User = z.infer<typeof UserSchema>;
