@@ -24,7 +24,7 @@ function LoginFormFields() {
       });
     }
     if (state?.success) {
-      router.push("/dashboard");
+      router.push(state.redirectTo || "/dashboard");
     }
   }, [state]);
 

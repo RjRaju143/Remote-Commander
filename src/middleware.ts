@@ -31,8 +31,9 @@ export async function middleware(request: NextRequest) {
   const isAuthPage = pathname === '/' || pathname.startsWith('/register');
   const isDashboardPage = pathname.startsWith('/dashboard');
   const isInvitationPage = pathname.startsWith('/invitation');
+  const isOrganizationPage = pathname.startsWith('/organization');
   
-  if (isInvitationPage) {
+  if (isInvitationPage || isOrganizationPage) {
     return NextResponse.next();
   }
 

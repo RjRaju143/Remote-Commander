@@ -5,16 +5,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { handleChangePassword, handleUpdateProfile, getUserForProfile } from "@/lib/actions";
-import { useEffect, useState, useCallback, useActionState } from "react";
+import { handleChangePassword, handleUpdateProfile, getUserForProfile, getUserOrganization, updateOrganization } from "@/lib/actions";
+import { useEffect, useState, useCallback, useActionState, useRef } from "react";
 import type { User } from "@/models/User";
+import type { Organization } from "@/models/Organization";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Eye, EyeOff } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useRouter } from "next/navigation";
 
 
 function ChangePasswordForm() {
     const { toast, notify } = useToast();
+    const router = useRouter();
     const [state, formAction, pending] = useActionState(handleChangePassword, undefined);
     const [showCurrent, setShowCurrent] = useState(false);
     const [showNew, setShowNew] = useState(false);
@@ -32,14 +36,19 @@ function ChangePasswordForm() {
         if (state?.success) {
             toast({
                 title: "Success",
-                description: "Your password has been changed successfully.",
+                description: "Your password has been changed successfully. Please log in again.",
             });
             if (state.notification) {
                 notify();
             }
             formRef.current?.reset();
+            
+            // Redirect to login after password change
+            setTimeout(() => {
+                router.push('/');
+            }, 2000);
         }
-    }, [state, toast, notify]);
+    }, [state?.error, state?.success, state?.notification, router]);
 
     return (
         <form action={formAction} ref={formRef}>
@@ -132,17 +141,119 @@ function ProfileForm({ user, onProfileUpdate }: { user: User | null; onProfileUp
 }
 
 
+function OrganizationForm({ organization, onUpdate }: { organization: Organization | null; onUpdate: () => void; }) {
+    const { toast } = useToast();
+    const [pending, setPending] = useState(false);
+
+    const handleSubmit = async (formData: FormData) => {
+        setPending(true);
+        try {
+            const data = {
+                name: formData.get("name") as string,
+                employeeCount: formData.get("employeeCount") as string,
+                role: formData.get("role") as string,
+            };
+            
+            const result = await updateOrganization(data);
+            if (result.success) {
+                toast({
+                    title: "Success",
+                    description: "Organization updated successfully.",
+                });
+                onUpdate();
+            } else {
+                toast({
+                    variant: "destructive",
+                    title: "Error",
+                    description: result.error || "Failed to update organization",
+                });
+            }
+        } catch (error) {
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: "Failed to update organization",
+            });
+        } finally {
+            setPending(false);
+        }
+    };
+
+    return (
+        <form action={handleSubmit}>
+            <CardContent className="space-y-4 pt-6">
+                <CardDescription>Update your organization information.</CardDescription>
+                <div className="space-y-4">
+                    <div className="space-y-2">
+                        <Label htmlFor="name">Organization Name</Label>
+                        <Input 
+                            key={organization?.name} 
+                            id="name" 
+                            name="name" 
+                            defaultValue={organization?.name || ''} 
+                            required 
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="employeeCount">Employee Count</Label>
+                        <Select name="employeeCount" defaultValue={organization?.employeeCount || '0-50'}>
+                            <SelectTrigger>
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="0-50">0-50</SelectItem>
+                                <SelectItem value="50-100">50-100</SelectItem>
+                                <SelectItem value="100-500">100-500</SelectItem>
+                                <SelectItem value="500+">500+</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="role">Your Role</Label>
+                        <Input 
+                            key={organization?.role} 
+                            id="role" 
+                            name="role" 
+                            defaultValue={organization?.role || ''} 
+                            required 
+                        />
+                    </div>
+                </div>
+                <Button type="submit" disabled={pending}>
+                    {pending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Save Changes
+                </Button>
+            </CardContent>
+        </form>
+    );
+}
+
+
 export default function SettingsPage() {
   const [user, setUser] = useState<User | null>(null);
+  const [organization, setOrganization] = useState<Organization | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const fetchUser = useCallback(async () => {
     const userData = await getUserForProfile();
     setUser(userData);
   }, []);
 
+  const fetchOrganization = useCallback(async () => {
+    try {
+      const orgData = await getUserOrganization();
+      setOrganization(orgData);
+    } catch (error) {
+      console.error('Error fetching organization:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchUser();
-  }, [fetchUser]);
+    fetchOrganization();
+  }, []);
 
   return (
     <div className="space-y-8">
@@ -154,8 +265,9 @@ export default function SettingsPage() {
       </div>
 
       <Tabs defaultValue="profile" className="w-full max-w-2xl">
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="profile">Profile</TabsTrigger>
+            <TabsTrigger value="organization">Organization</TabsTrigger>
             <TabsTrigger value="password">Password</TabsTrigger>
         </TabsList>
         <TabsContent value="profile">
@@ -164,6 +276,27 @@ export default function SettingsPage() {
                     <CardTitle>Account Profile</CardTitle>
                 </CardHeader>
                 <ProfileForm user={user} onProfileUpdate={fetchUser} />
+            </Card>
+        </TabsContent>
+        <TabsContent value="organization">
+            <Card>
+                <CardHeader>
+                    <CardTitle>Organization</CardTitle>
+                </CardHeader>
+                {loading ? (
+                    <CardContent className="space-y-4 pt-6">
+                        <div className="flex items-center space-x-2">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>Loading organization data...</span>
+                        </div>
+                    </CardContent>
+                ) : organization ? (
+                    <OrganizationForm organization={organization} onUpdate={fetchOrganization} />
+                ) : (
+                    <CardContent className="space-y-4 pt-6">
+                        <p className="text-muted-foreground">No organization information found.</p>
+                    </CardContent>
+                )}
             </Card>
         </TabsContent>
         <TabsContent value="password">

@@ -19,7 +19,7 @@ function RegisterFormFields() {
 
   useEffect(() => {
     if (state?.success) {
-      router.push("/dashboard");
+      router.push("/organization");
     }
     if (state?.error) {
       toast({

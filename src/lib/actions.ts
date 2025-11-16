@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import clientPromise from "./mongodb";
 import { revalidatePath } from "next/cache";
 import { ServerSchema } from "@/models/Server";
+import { OrganizationSchema, type Organization } from "@/models/Organization";
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import type { User } from "@/models/User";
@@ -31,6 +32,7 @@ export interface AuthState {
   success?: boolean;
   message?: string;
   notification?: boolean;
+  redirectTo?: string;
 }
 
 const LoginSchema = z.object({
@@ -96,6 +98,12 @@ export async function handleLogin(
       return { error: "Invalid email or password." };
     }
 
+    // Check if organization is completed
+    if (!user.organizationCompleted) {
+      setPendingUserEmail(email);
+      return { success: true, redirectTo: "/organization" };
+    }
+
     const sessionResult = await createSession(user._id.toString());
     if (!sessionResult.success || !sessionResult.sessionId) {
       return { error: sessionResult.error };
@@ -155,27 +163,18 @@ export async function handleRegister(
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const result = await db.collection("users").insertOne({
+    await db.collection("users").insertOne({
       email,
       password: hashedPassword,
       firstName,
       lastName,
       favorites: [],
       roles: ['user'], // Default role
+      organizationCompleted: false,
     });
-    
-    const sessionResult = await createSession(result.insertedId.toString());
-    if (!sessionResult.success || !sessionResult.sessionId) {
-      return { error: sessionResult.error };
-    }
 
-    const cookieStore = await cookies();
-    cookieStore.set('session', sessionResult.sessionId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      maxAge: SESSION_DURATION_SECONDS,
-      path: '/',
-    });
+    // Set pending user email for organization completion
+    setPendingUserEmail(email);
 
     return { success: true };
   } catch (error) {
@@ -640,10 +639,13 @@ export async function handleChangePassword(
             { _id: new ObjectId(user._id) },
             { $set: { password: hashedNewPassword } }
         );
+
+        // Invalidate all sessions for this user to force re-login
+        await db.collection('sessions').deleteMany({ userId: new ObjectId(user._id) });
         
         await createNotification(user._id, "Your password was changed successfully.", 'password_changed');
 
-        return { success: true, notification: true };
+        return { success: true, notification: true, forceLogout: true };
 
     } catch (error) {
         console.error('Failed to change password:', error);
@@ -703,6 +705,65 @@ export async function getUserForProfile(): Promise<User | null> {
         lastName: user.lastName,
         roles: user.roles,
         favorites: user.favorites,
+    };
+}
+
+export async function updateOrganization(data: {
+    name: string;
+    employeeCount: string;
+    role: string;
+}): Promise<{ success?: boolean; error?: string }> {
+    try {
+        const user = await getCurrentUser();
+        if (!user) {
+            return { error: "Not authenticated" };
+        }
+
+        const client = await clientPromise;
+        const db = client.db();
+
+        await db.collection("organizations").updateOne(
+            { userId: new ObjectId(user._id.toString()) },
+            { 
+                $set: {
+                    name: data.name,
+                    employeeCount: data.employeeCount,
+                    role: data.role,
+                }
+            }
+        );
+
+        return { success: true };
+    } catch (error) {
+        console.error("Organization update failed:", error);
+        return { error: "Failed to update organization" };
+    }
+}
+
+export async function getUserOrganization(): Promise<Organization | null> {
+    const user = await getCurrentUser();
+    if (!user) {
+        return null;
+    }
+
+    const client = await clientPromise;
+    const db = client.db();
+    
+    const organization = await db.collection("organizations").findOne({ 
+        userId: new ObjectId(user._id.toString()) 
+    });
+    
+    if (!organization) {
+        return null;
+    }
+
+    return {
+        _id: organization._id.toString(),
+        name: organization.name,
+        employeeCount: organization.employeeCount,
+        role: organization.role,
+        userId: organization.userId.toString(),
+        createdAt: organization.createdAt,
     };
 }
 
@@ -1365,5 +1426,72 @@ export async function getServerById(serverId: string): Promise<Server | null> {
   } catch (error) {
     console.error("Failed to fetch server:", error);
     return null;
+  }
+}
+// Store user email temporarily for organization completion
+let pendingUserEmail: string | null = null;
+
+export async function setPendingUserEmail(email: string) {
+  pendingUserEmail = email;
+}
+
+export async function submitOrganization(data: {
+  name: string;
+  employeeCount: string;
+  role: string;
+}) {
+  try {
+    const client = await clientPromise;
+    const db = client.db();
+    
+    // Find user by pending email or most recent incomplete user
+    let user;
+    if (pendingUserEmail) {
+      user = await db.collection("users").findOne({ email: pendingUserEmail });
+      pendingUserEmail = null; // Clear after use
+    } else {
+      user = await db.collection("users").findOne(
+        { organizationCompleted: { $ne: true } },
+        { sort: { _id: -1 } }
+      );
+    }
+
+    if (!user) {
+      throw new Error("No user found for organization setup");
+    }
+
+    // Insert organization
+    await db.collection("organizations").insertOne({
+      name: data.name,
+      employeeCount: data.employeeCount,
+      role: data.role,
+      userId: user._id,
+      createdAt: new Date(),
+    });
+
+    // Update user to mark organization as completed
+    await db.collection("users").updateOne(
+      { _id: user._id },
+      { $set: { organizationCompleted: true } }
+    );
+
+    // Create session for the user
+    const sessionResult = await createSession(user._id.toString());
+    if (!sessionResult.success || !sessionResult.sessionId) {
+      throw new Error(sessionResult.error);
+    }
+
+    const cookieStore = await cookies();
+    cookieStore.set('session', sessionResult.sessionId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: SESSION_DURATION_SECONDS,
+      path: '/',
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error("Organization submission failed:", error);
+    throw error;
   }
 }
