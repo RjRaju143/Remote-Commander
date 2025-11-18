@@ -45,20 +45,15 @@ A secure web interface to execute and stream terminal commands to remote Linux s
    Copy `.env.sample` to `.env` and configure:
    ```env
    # Database
+   NODE_ENV=production
    MONGODB_URI=mongodb://localhost:27017/remote-commander
-   
-   # Authentication
-   JWT_SECRET=your-jwt-secret-key
    ENCRYPTION_SECRET=your-encryption-secret
-   
-   # AI (Optional)
-   GOOGLE_GENAI_API_KEY=your-google-ai-key
-   
-   # Email (Optional - for support)
+   GEMINI_API_KEY=your-gemini-api-key
    SMTP_HOST=smtp.gmail.com
-   SMTP_PORT=587
-   SMTP_USER=your-email@gmail.com
-   SMTP_PASS=your-app-password
+   SMTP_PORT=465
+   SMTP_USER="smtp-user"
+   SMTP_PASS="smtp-password"
+   SENDER_EMAIL="smtp-email"
    ```
 
 4. **Start the application**

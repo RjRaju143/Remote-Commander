@@ -12,10 +12,15 @@
 
 Create `.env` file with required variables:
 ```bash
+NODE_ENV=production
 MONGODB_URI=mongodb://localhost:27017/remote-commander
-JWT_SECRET=your-jwt-secret-key
 ENCRYPTION_SECRET=your-encryption-secret
 GEMINI_API_KEY=your-gemini-api-key
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_USER="smtp-user"
+SMTP_PASS="smtp-password"
+SENDER_EMAIL="smtp-email"
 ```
 
 ### 2. Install Dependencies
@@ -68,9 +73,14 @@ docker run -d \
   --name remote-commander \
   -p 3000:3000 \
   -e MONGODB_URI="your-mongodb-uri" \
-  -e JWT_SECRET="your-jwt-secret" \
   -e ENCRYPTION_SECRET="your-encryption-secret" \
   -e GEMINI_API_KEY="your-gemini-api-key" \
+  -e NODE_ENV="production" \
+  -e SMTP_HOST="smtp.gmail.com" \
+  -e SMTP_PORT=465 \
+  -e SMTP_USER="smtp-user" \
+  -e SMTP_PASS="smtp-password" \
+  -e SENDER_EMAIL="smtp-email" \
   remote-commander
 ```
 
@@ -86,10 +96,16 @@ services:
     ports:
       - "3000:3000"
     environment:
+      - NODE_ENV=${NODE_ENV}
       - MONGODB_URI=${MONGODB_URI}
-      - JWT_SECRET=${JWT_SECRET}
       - ENCRYPTION_SECRET=${ENCRYPTION_SECRET}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - SENDER_EMAIL=${SENDER_EMAIL}
+
     depends_on:
       - mongodb
     restart: unless-stopped
