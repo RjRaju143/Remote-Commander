@@ -13,6 +13,7 @@ import type { User } from "@/models/User";
 import { ObjectId } from "mongodb";
 import { Client } from 'ssh2';
 import nodemailer from 'nodemailer';
+import crypto from 'crypto';
 import { NotificationModel, NotificationSchema, NotificationType } from "@/models/Notification";
 import { decrypt, encrypt } from "./server-helpers";
 import { getServerMetricsCommand } from "@/ai/flows/get-server-metrics";
@@ -98,6 +99,8 @@ export async function handleLogin(
       return { error: "Invalid email or password." };
     }
 
+
+
     // Check if organization is completed
     if (!user.organizationCompleted) {
       setPendingUserEmail(email);
@@ -136,6 +139,92 @@ const RegisterSchema = z.object({
 });
 
 
+async function sendVerificationEmail(email: string, token: string, otp?: string) {
+  const dbClient = await clientPromise;
+  const db = dbClient.db();
+  const smtpSettings = await db.collection('settings').findOne({ key: 'smtp' });
+
+  let transporter;
+  if (smtpSettings) {
+    transporter = nodemailer.createTransport({
+      host: smtpSettings.host,
+      port: Number(smtpSettings.port),
+      secure: Number(smtpSettings.port) === 465,
+      auth: {
+        user: smtpSettings.user,
+        pass: decrypt(smtpSettings.pass),
+      },
+    });
+  } else {
+    const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
+    if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
+      throw new Error('SMTP not configured');
+    }
+    transporter = nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: Number(SMTP_PORT),
+      secure: Number(SMTP_PORT) === 465,
+      auth: { user: SMTP_USER, pass: SMTP_PASS },
+    });
+  }
+
+  const verificationUrl = `${process.env.NEXT_PUBLIC_APP_URL}/verify-email?token=${token}`;
+  const senderEmail = smtpSettings?.senderEmail || process.env.SENDER_EMAIL || smtpSettings?.user || process.env.SMTP_USER;
+
+  await transporter.sendMail({
+    from: `"Remote Commander" <${senderEmail}>`,
+    to: email,
+    subject: 'Verify Your Email - Remote Commander',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff; padding: 20px; border-radius: 8px; border: 1px solid #e5e5e5;">
+        
+        <h2 style="text-align: center; color: #333;">Welcome to <span style="color:#007bff;">Remote Commander</span>!</h2>
+        
+        <p style="font-size: 15px; color: #444; text-align: center;">
+          To complete your registration, please verify your email address using one of the options below.
+        </p>
+
+        <!-- OTP Section -->
+        <div style="margin: 25px 0; padding: 20px; background-color: #f4f7ff; border-left: 4px solid #007bff; border-radius: 6px;">
+          <h3 style="margin: 0; color: #333; text-align: center;">Your 6-Digit Verification Code</h3>
+
+          <div style="
+            font-size: 28px;
+            font-weight: bold;
+            color: #007bff;
+            text-align: center;
+            background: #fff;
+            margin-top: 15px;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #dce3f0;
+            letter-spacing: 4px;">
+            ${otp || 'N/A'}
+          </div>
+        </div>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${verificationUrl}"
+            style="
+              background-color: #007bff;
+              color: white;
+              padding: 12px 28px;
+              font-size: 16px;
+              text-decoration: none;
+              border-radius: 6px;
+              display: inline-block;">
+            Verify Email
+          </a>
+        </div>
+
+        <p style="color: #777; font-size: 12px; text-align: center; margin-top: 30px;">
+          This verification link and code will expire in 24 hours.
+        </p>
+      </div>
+
+    `,
+  });
+}
+
 export async function handleRegister(
   prevState: AuthState | undefined,
   formData: FormData
@@ -169,14 +258,15 @@ export async function handleRegister(
       firstName,
       lastName,
       favorites: [],
-      roles: ['user'], // Default role
+      roles: ['user'],
       organizationCompleted: false,
+      emailVerified: false,
     });
 
     // Set pending user email for organization completion
     setPendingUserEmail(email);
 
-    return { success: true };
+    return { success: true, redirectTo: "/organization" };
   } catch (error) {
     console.error(error);
     return { error: "Something went wrong." };
@@ -1444,12 +1534,18 @@ export async function submitOrganization(data: {
     const client = await clientPromise;
     const db = client.db();
     
-    // Find user by pending email or most recent incomplete user
+    // Find user by pending email or most recent user without organization
     let user;
     if (pendingUserEmail) {
-      user = await db.collection("users").findOne({ email: pendingUserEmail });
+      user = await db.collection("users").findOne({ 
+        email: pendingUserEmail,
+        organizationCompleted: { $ne: true }
+      });
       pendingUserEmail = null; // Clear after use
-    } else {
+    }
+    
+    // Fallback: find most recent user without organization
+    if (!user) {
       user = await db.collection("users").findOne(
         { organizationCompleted: { $ne: true } },
         { sort: { _id: -1 } }
@@ -1469,16 +1565,27 @@ export async function submitOrganization(data: {
       createdAt: new Date(),
     });
 
-    // Update user to mark organization as completed
+    // Update user to mark organization as completed and add verification token + OTP
+    const verificationToken = crypto.randomUUID();
+    const verificationOTP = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
+    const verificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    
     await db.collection("users").updateOne(
       { _id: user._id },
-      { $set: { organizationCompleted: true } }
+      { 
+        $set: { 
+          organizationCompleted: true,
+          emailVerificationToken: verificationToken,
+          emailVerificationOTP: verificationOTP,
+          emailVerificationExpires: verificationExpires
+        } 
+      }
     );
 
     // Create session for the user
     const sessionResult = await createSession(user._id.toString());
     if (!sessionResult.success || !sessionResult.sessionId) {
-      throw new Error(sessionResult.error);
+      throw new Error(sessionResult.error || "Failed to create session");
     }
 
     const cookieStore = await cookies();
@@ -1489,7 +1596,14 @@ export async function submitOrganization(data: {
       path: '/',
     });
 
-    return { success: true };
+    // Send verification email
+    try {
+      await sendVerificationEmail(user.email, verificationToken, verificationOTP);
+    } catch (emailError) {
+      console.error('Failed to send verification email:', emailError);
+    }
+
+    return { success: true, message: "Organization setup complete! Please check your email to verify your account." };
   } catch (error) {
     console.error("Organization submission failed:", error);
     throw error;
