@@ -32,9 +32,15 @@ export async function middleware(request: NextRequest) {
   const isDashboardPage = pathname.startsWith('/dashboard');
   const isInvitationPage = pathname.startsWith('/invitation');
   const isOrganizationPage = pathname.startsWith('/organization');
+  const isVerifyEmailPage = pathname.startsWith('/verify-email');
   
   if (isInvitationPage || isOrganizationPage) {
     return NextResponse.next();
+  }
+  
+  // Redirect to login if accessing verify-email without session
+  if (isVerifyEmailPage && !sessionId) {
+    return NextResponse.redirect(new URL('/', request.url));
   }
 
   // If no session ID, redirect to login if trying to access a protected page

@@ -31,8 +31,10 @@ export function OrganizationForm() {
   const onSubmit = async (data: OrganizationForm) => {
     setIsLoading(true);
     try {
-      await submitOrganization(data);
-      router.push("/dashboard");
+      const result = await submitOrganization(data);
+      if (result.success) {
+        router.push("/verify-email");
+      }
     } catch (error) {
       console.error("Organization submission failed:", error);
     } finally {
