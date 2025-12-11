@@ -5,8 +5,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/shell-sessions';
 
 // GET request handler for polling output
-export async function GET(request: NextRequest, { params }: { params: { sessionId: string } }) {
-    const sessionId = params?.sessionId;
+export async function GET(request: NextRequest, { params }: { params: Promise<{ sessionId: string }> }) {
+    const { sessionId } = await params;
     if (!sessionId) {
         return NextResponse.json({ message: 'sessionId not found or expired' }, { status: 404 });
     }
@@ -23,8 +23,8 @@ export async function GET(request: NextRequest, { params }: { params: { sessionI
 }
 
 // POST request handler for sending input
-export async function POST(request: NextRequest, { params }: { params: { sessionId: string } }) {
-    const sessionId = params.sessionId;
+export async function POST(request: NextRequest, { params }: { params: Promise<{ sessionId: string }> }) {
+    const { sessionId } = await params;
     const session = getSession(sessionId);
 
     if (!session) {
